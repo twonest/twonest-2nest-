@@ -56,13 +56,23 @@ export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [formError, setFormError] = useState("");
+  const [editError, setEditError] = useState("");
 
   const [title, setTitle] = useState("");
   const [eventType, setEventType] = useState<EventType>("Garde");
   const [startAt, setStartAt] = useState(() => formatForDateTimeLocal(new Date()));
   const [endAt, setEndAt] = useState(() => formatForDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
+
+  const [editingEventId, setEditingEventId] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editEventType, setEditEventType] = useState<EventType>("Garde");
+  const [editStartAt, setEditStartAt] = useState("");
+  const [editEndAt, setEditEndAt] = useState("");
 
   const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
 
@@ -123,7 +133,7 @@ export default function CalendarPage() {
 
           return {
             id: String(row.id),
-            title: `${row.title} · ${row.type}`,
+            title: row.title,
             type: row.type,
             start: startDate,
             end: endDate,
@@ -162,6 +172,22 @@ export default function CalendarPage() {
     setFormError("");
   };
 
+  const openEditForm = (selectedEvent: CalendarEvent) => {
+    setEditError("");
+    setEditingEventId(selectedEvent.id);
+    setEditTitle(selectedEvent.title);
+    setEditEventType(selectedEvent.type);
+    setEditStartAt(formatForDateTimeLocal(selectedEvent.start));
+    setEditEndAt(formatForDateTimeLocal(selectedEvent.end));
+    setEditOpen(true);
+  };
+
+  const closeEditForm = () => {
+    setEditOpen(false);
+    setEditError("");
+    setEditingEventId("");
+  };
+
   const refreshEvents = async () => {
     const supabase = getSupabaseBrowserClient();
     const { data, error } = await supabase.from("events").select("*").order("start_at", { ascending: true });
@@ -189,7 +215,7 @@ export default function CalendarPage() {
 
         return {
           id: String(row.id),
-          title: `${row.title} · ${row.type}`,
+          title: row.title,
           type: row.type,
           start: startDate,
           end: endDate,
@@ -266,6 +292,97 @@ export default function CalendarPage() {
     }
   };
 
+  const onUpdateEvent = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!editingEventId || editTitle.trim().length === 0 || editStartAt.length === 0 || editEndAt.length === 0) {
+      setEditError("Tous les champs sont obligatoires.");
+      return;
+    }
+
+    const startDate = new Date(editStartAt);
+    const endDate = new Date(editEndAt);
+
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      setEditError("Dates invalides.");
+      return;
+    }
+
+    if (endDate <= startDate) {
+      setEditError("La date de fin doit être après la date de début.");
+      return;
+    }
+
+    setIsUpdating(true);
+    setEditError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const basePayload = {
+        title: editTitle.trim(),
+        type: editEventType,
+      };
+
+      const { error: updateError } = await supabase
+        .from("events")
+        .update({
+          ...basePayload,
+          start_at: startDate.toISOString(),
+          end_at: endDate.toISOString(),
+        })
+        .eq("id", editingEventId);
+
+      if (updateError) {
+        const { error: fallbackError } = await supabase
+          .from("events")
+          .update({
+            ...basePayload,
+            start_date: startDate.toISOString(),
+            end_date: endDate.toISOString(),
+          })
+          .eq("id", editingEventId);
+
+        if (fallbackError) {
+          setEditError(fallbackError.message);
+          return;
+        }
+      }
+
+      await refreshEvents();
+      closeEditForm();
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : "Erreur pendant la modification de l'événement.");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const onDeleteEvent = async () => {
+    if (!editingEventId) {
+      return;
+    }
+
+    setIsDeleting(true);
+    setEditError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.from("events").delete().eq("id", editingEventId);
+
+      if (error) {
+        setEditError(error.message);
+        return;
+      }
+
+      await refreshEvents();
+      closeEditForm();
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : "Erreur pendant la suppression de l'événement.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (checkingSession || isLoadingEvents) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#F6FAFF] to-[#EEF5FC] px-6">
@@ -315,6 +432,8 @@ export default function CalendarPage() {
           <p className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{formError}</p>
         )}
 
+        <p className="text-sm font-medium text-[#5B7691]">Clique sur un événement pour le modifier ou le supprimer.</p>
+
         <section className="overflow-hidden rounded-2xl border border-[#D7E6F4] bg-white p-2 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-4">
           <Calendar
             localizer={localizer}
@@ -324,6 +443,8 @@ export default function CalendarPage() {
             defaultView={Views.MONTH}
             views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
             style={{ height: 650 }}
+            titleAccessor={(event) => `${event.title} · ${event.type}`}
+            onSelectEvent={openEditForm}
             eventPropGetter={(event) => {
               const isParentOne = event.ownerUserId === user?.id || event.parent === "parent1";
               return {
@@ -431,6 +552,106 @@ export default function CalendarPage() {
               >
                 {isCreating ? "Enregistrement..." : "Enregistrer"}
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-[#17324D]">Modifier l'événement</h2>
+              <button
+                type="button"
+                onClick={closeEditForm}
+                className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
+              >
+                ✕
+              </button>
+            </div>
+
+            {editError && (
+              <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm text-[#8D3E45]">
+                {editError}
+              </p>
+            )}
+
+            <form className="space-y-4" onSubmit={onUpdateEvent}>
+              <div>
+                <label htmlFor="editTitle" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Titre de l'événement
+                </label>
+                <input
+                  id="editTitle"
+                  type="text"
+                  value={editTitle}
+                  onChange={(event) => setEditTitle(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="editType" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Type
+                </label>
+                <select
+                  id="editType"
+                  value={editEventType}
+                  onChange={(event) => setEditEventType(event.target.value as EventType)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                >
+                  {EVENT_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="editStartAt" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Date début
+                </label>
+                <input
+                  id="editStartAt"
+                  type="datetime-local"
+                  value={editStartAt}
+                  onChange={(event) => setEditStartAt(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="editEndAt" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Date fin
+                </label>
+                <input
+                  id="editEndAt"
+                  type="datetime-local"
+                  value={editEndAt}
+                  onChange={(event) => setEditEndAt(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={isUpdating || isDeleting}
+                  className="flex-1 rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isUpdating ? "Mise à jour..." : "Enregistrer"}
+                </button>
+                <button
+                  type="button"
+                  onClick={onDeleteEvent}
+                  disabled={isUpdating || isDeleting}
+                  className="flex-1 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm font-semibold text-[#8D3E45] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isDeleting ? "Suppression..." : "Supprimer"}
+                </button>
+              </div>
             </form>
           </div>
         </div>
