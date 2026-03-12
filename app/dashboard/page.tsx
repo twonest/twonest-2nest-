@@ -17,6 +17,7 @@ const ACTIONS: DashboardAction[] = [
   { emoji: "💬", label: "Messages", href: "/messages" },
   { emoji: "💸", label: "Dépenses", href: "/expenses" },
   { emoji: "📁", label: "Documents", href: "/documents" },
+  { emoji: "👤", label: "Mon profil", href: "/profile" },
 ];
 
 function getFirstName(user: User): string {
