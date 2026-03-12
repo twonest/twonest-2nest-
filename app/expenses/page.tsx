@@ -107,6 +107,54 @@ function toMonthValue(dateInput: string): string {
   return `${date.getFullYear()}-${month}`;
 }
 
+function shiftMonth(monthValue: string, delta: number): string {
+  const [rawYear, rawMonth] = monthValue.split("-");
+  const year = Number(rawYear);
+  const month = Number(rawMonth);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return toMonthValue(new Date().toISOString());
+  }
+
+  const date = new Date(year, month - 1 + delta, 1);
+  const nextMonth = `${date.getMonth() + 1}`.padStart(2, "0");
+  return `${date.getFullYear()}-${nextMonth}`;
+}
+
+function formatMonthLabel(monthValue: string): string {
+  const [rawYear, rawMonth] = monthValue.split("-");
+  const year = Number(rawYear);
+  const month = Number(rawMonth);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return monthValue;
+  }
+
+  const label = new Date(year, month - 1, 1).toLocaleDateString("fr-CA", {
+    month: "long",
+    year: "numeric",
+  });
+
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function getReceiptType(url: string | null): "image" | "pdf" | "other" {
+  if (!url) {
+    return "other";
+  }
+
+  const cleanUrl = url.split("?")[0].toLowerCase();
+  if (cleanUrl.endsWith(".pdf")) {
+    return "pdf";
+  }
+
+  if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg") || cleanUrl.endsWith(".png") || cleanUrl.endsWith(".webp")) {
+    return "image";
+  }
+
+  return "other";
+}
+
 export default function ExpensesPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -128,8 +176,7 @@ export default function ExpensesPage() {
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const [receiptMimeType, setReceiptMimeType] = useState("");
 
-  const [selectedMonth, setSelectedMonth] = useState("all");
-  const [selectedCategory, setSelectedCategory] = useState<ExpenseCategory | "all">("all");
+  const [selectedMonth, setSelectedMonth] = useState(() => toMonthValue(new Date().toISOString()));
   const [receiptViewerUrl, setReceiptViewerUrl] = useState<string | null>(null);
   const [receiptViewerIsPdf, setReceiptViewerIsPdf] = useState(false);
 
@@ -472,22 +519,20 @@ export default function ExpensesPage() {
     }
   };
 
-  const monthOptions = useMemo(() => {
-    const months = Array.from(new Set(expenses.map((expense) => toMonthValue(expense.expenseDate)).filter(Boolean))).sort(
-      (a, b) => (a < b ? 1 : -1),
-    );
-
-    return months;
-  }, [expenses]);
-
   const filteredExpenses = useMemo(() => {
     return expenses.filter((expense) => {
       const month = toMonthValue(expense.expenseDate);
-      const matchesMonth = selectedMonth === "all" || month === selectedMonth;
-      const matchesCategory = selectedCategory === "all" || expense.category === selectedCategory;
-      return matchesMonth && matchesCategory;
+      return month === selectedMonth;
     });
-  }, [expenses, selectedMonth, selectedCategory]);
+  }, [expenses, selectedMonth]);
+
+  const monthTotal = useMemo(() => {
+    return filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  }, [filteredExpenses]);
+
+  const reimbursedTotal = useMemo(() => {
+    return filteredExpenses.reduce((sum, expense) => (expense.reimbursed ? sum + expense.amount : sum), 0);
+  }, [filteredExpenses]);
 
   const balance = useMemo(() => {
     let net = 0;
@@ -679,49 +724,26 @@ export default function ExpensesPage() {
           <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">TABLEAU DE BORD DES DÉPENSES</p>
           <h2 className="mb-3 mt-1 text-xl font-semibold text-[#17324D]">Suivi et remboursements</h2>
 
-          <div className="mb-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
-            <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">SOLDE ACTUEL</p>
-            <p className="mt-1 text-lg font-semibold text-[#1F4D77]">{balanceText}</p>
-          </div>
+          <div className="mb-4 flex items-center justify-between gap-2 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-3 py-3 sm:px-4">
+            <button
+              type="button"
+              onClick={() => setSelectedMonth((current) => shiftMonth(current, -1))}
+              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+            >
+              ←
+            </button>
 
-          <div className="mb-4 grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="monthFilter" className="mb-1 block text-sm font-medium text-[#2D4B68]">
-                Filtrer par mois
-              </label>
-              <select
-                id="monthFilter"
-                value={selectedMonth}
-                onChange={(event) => setSelectedMonth(event.target.value)}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-              >
-                <option value="all">Tous les mois</option>
-                {monthOptions.map((month) => (
-                  <option key={month} value={month}>
-                    {month}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <p className="text-center text-base font-semibold text-[#1F4D77] sm:text-lg">
+              {formatMonthLabel(shiftMonth(selectedMonth, -1))} | {formatMonthLabel(selectedMonth)} | {formatMonthLabel(shiftMonth(selectedMonth, 1))}
+            </p>
 
-            <div>
-              <label htmlFor="categoryFilter" className="mb-1 block text-sm font-medium text-[#2D4B68]">
-                Filtrer par catégorie
-              </label>
-              <select
-                id="categoryFilter"
-                value={selectedCategory}
-                onChange={(event) => setSelectedCategory(event.target.value as ExpenseCategory | "all")}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-              >
-                <option value="all">Toutes les catégories</option>
-                {CATEGORIES.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedMonth((current) => shiftMonth(current, 1))}
+              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+            >
+              →
+            </button>
           </div>
 
           {listError && (
@@ -731,7 +753,7 @@ export default function ExpensesPage() {
           <div className="space-y-3">
             {filteredExpenses.length === 0 ? (
               <p className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] px-4 py-3 text-sm text-[#4A6783]">
-                Aucune dépense pour ce filtre.
+                Aucune dépense pour {formatMonthLabel(selectedMonth)}.
               </p>
             ) : (
               filteredExpenses.map((expense) => (
@@ -768,18 +790,47 @@ export default function ExpensesPage() {
                       >
                         {expense.reimbursed ? "Remboursé" : "Non remboursé"}
                       </span>
-                      {expense.receiptUrl ? (
+                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "image" && (
                         <button
                           type="button"
                           onClick={() => openReceiptViewer(expense.receiptUrl!)}
+                          className="overflow-hidden rounded-lg border border-[#D0DFEE] bg-white transition hover:brightness-95"
+                          title="Ouvrir la photo du reçu"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={expense.receiptUrl}
+                            alt="Miniature du reçu"
+                            className="h-12 w-12 object-cover"
+                          />
+                        </button>
+                      )}
+
+                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "pdf" && (
+                        <a
+                          href={expense.receiptUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full border border-[#D0DFEE] bg-white px-3 py-1 text-xs font-semibold text-[#2E6395] transition hover:bg-[#F3F8FD]"
+                          title="Ouvrir le PDF"
+                        >
+                          📄 PDF
+                        </a>
+                      )}
+
+                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "other" && (
+                        <a
+                          href={expense.receiptUrl}
+                          target="_blank"
+                          rel="noreferrer"
                           className="rounded-full border border-[#D0DFEE] bg-white px-3 py-1 text-xs font-semibold text-[#2E6395] transition hover:bg-[#F3F8FD]"
                           title="Ouvrir le reçu"
                         >
                           📎 Reçu
-                        </button>
-                      ) : (
-                        <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>
+                        </a>
                       )}
+
+                      {!expense.receiptUrl && <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -807,6 +858,15 @@ export default function ExpensesPage() {
                 </article>
               ))
             )}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
+            <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">RÉCAPITULATIF DE {formatMonthLabel(selectedMonth).toUpperCase()}</p>
+            <div className="mt-2 grid gap-2 text-sm text-[#2D4B68] sm:grid-cols-3">
+              <p>Total des dépenses: <span className="font-semibold text-[#17324D]">{formatCurrency(monthTotal)}$</span></p>
+              <p>Total remboursé: <span className="font-semibold text-[#17324D]">{formatCurrency(reimbursedTotal)}$</span></p>
+              <p>Solde restant: <span className="font-semibold text-[#17324D]">{balanceText}</span></p>
+            </div>
           </div>
         </section>
       </main>
