@@ -163,14 +163,12 @@ function isReceiptFromBucket(url: string | null): boolean {
 
   return (
     url.includes("/storage/v1/object/public/receipts/") ||
-    url.includes("/storage/v1/object/sign/receipts/")
+    url.includes("/storage/v1/object/sign/receipts/") ||
+    url.includes("/storage/v1/object/authenticated/receipts/")
   );
 }
 
-function normalizeReceiptUrl(
-  rawReceiptUrl: string | null,
-  client: ReturnType<typeof getSupabaseBrowserClient>,
-): string | null {
+function extractReceiptPath(rawReceiptUrl: string | null): string | null {
   if (!rawReceiptUrl) {
     return null;
   }
@@ -180,8 +178,9 @@ function normalizeReceiptUrl(
     return null;
   }
 
-  if (/^https?:\/\//i.test(trimmed)) {
-    return isReceiptFromBucket(trimmed) ? trimmed : null;
+  const storageMatch = trimmed.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/receipts\/([^?]+)/i);
+  if (storageMatch?.[1]) {
+    return decodeURIComponent(storageMatch[1]);
   }
 
   let storagePath = trimmed.replace(/^\/+/, "");
@@ -196,11 +195,32 @@ function normalizeReceiptUrl(
     return null;
   }
 
+  return decodeURIComponent(storagePath);
+}
+
+async function normalizeReceiptUrl(
+  rawReceiptUrl: string | null,
+  client: ReturnType<typeof getSupabaseBrowserClient>,
+): Promise<string | null> {
+  const storagePath = extractReceiptPath(rawReceiptUrl);
+
+  if (!storagePath) {
+    return null;
+  }
+
+  const { data: signedData, error: signedError } = await client.storage
+    .from("receipts")
+    .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
+
+  if (!signedError && signedData?.signedUrl && isReceiptFromBucket(signedData.signedUrl)) {
+    return signedData.signedUrl;
+  }
+
   const {
     data: { publicUrl },
   } = client.storage.from("receipts").getPublicUrl(storagePath);
 
-  return publicUrl || null;
+  return isReceiptFromBucket(publicUrl) ? publicUrl : null;
 }
 
 function toDateOnlyValue(dateInput: string): string | null {
@@ -330,8 +350,8 @@ export default function ExpensesPage() {
       return;
     }
 
-    const mapped = (data as SupabaseExpenseRow[])
-      .map((row): ExpenseItem | null => {
+    const mappedEntries = await Promise.all(
+      (data as SupabaseExpenseRow[]).map(async (row): Promise<ExpenseItem | null> => {
         const parsedAmount = parseAmount(row.amount ?? row.montant);
         const rawDate = row.expense_date ?? row.date ?? row.spent_at ?? row.created_at;
 
@@ -347,7 +367,7 @@ export default function ExpensesPage() {
           statusText === "reimbursed";
 
         const rawReceiptUrl = row.receipt_url ?? row.receipt_file_url ?? row.justificatif_url ?? row.file_url ?? null;
-        const normalizedReceiptUrl = normalizeReceiptUrl(rawReceiptUrl, client);
+        const normalizedReceiptUrl = await normalizeReceiptUrl(rawReceiptUrl, client);
 
         return {
           id: String(row.id),
@@ -359,8 +379,10 @@ export default function ExpensesPage() {
           reimbursed,
           receiptUrl: normalizedReceiptUrl,
         };
-      })
-      .filter((expense): expense is ExpenseItem => expense !== null);
+      }),
+    );
+
+    const mapped = mappedEntries.filter((expense): expense is ExpenseItem => expense !== null);
 
     setExpenses(mapped);
   };
