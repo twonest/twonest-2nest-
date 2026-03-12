@@ -167,6 +167,42 @@ function isReceiptFromBucket(url: string | null): boolean {
   );
 }
 
+function normalizeReceiptUrl(
+  rawReceiptUrl: string | null,
+  client: ReturnType<typeof getSupabaseBrowserClient>,
+): string | null {
+  if (!rawReceiptUrl) {
+    return null;
+  }
+
+  const trimmed = rawReceiptUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return isReceiptFromBucket(trimmed) ? trimmed : null;
+  }
+
+  let storagePath = trimmed.replace(/^\/+/, "");
+
+  if (storagePath.startsWith("public/receipts/")) {
+    storagePath = storagePath.slice("public/receipts/".length);
+  } else if (storagePath.startsWith("receipts/")) {
+    storagePath = storagePath.slice("receipts/".length);
+  }
+
+  if (!storagePath) {
+    return null;
+  }
+
+  const {
+    data: { publicUrl },
+  } = client.storage.from("receipts").getPublicUrl(storagePath);
+
+  return publicUrl || null;
+}
+
 function toDateOnlyValue(dateInput: string): string | null {
   const parsedDate = new Date(dateInput);
   if (Number.isNaN(parsedDate.getTime())) {
@@ -311,7 +347,7 @@ export default function ExpensesPage() {
           statusText === "reimbursed";
 
         const rawReceiptUrl = row.receipt_url ?? row.receipt_file_url ?? row.justificatif_url ?? row.file_url ?? null;
-        const normalizedReceiptUrl = isReceiptFromBucket(rawReceiptUrl) ? rawReceiptUrl : null;
+        const normalizedReceiptUrl = normalizeReceiptUrl(rawReceiptUrl, client);
 
         return {
           id: String(row.id),
