@@ -241,34 +241,52 @@ export default function ExpensesPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const payload = {
-        user_id: user.id,
-        amount: parsedAmount,
-        description: description.trim(),
-        category,
-        paid_by: paidBy,
-        expense_date: expenseDate,
-        reimbursed: false,
-        status: "unpaid",
-      };
-
-      const { error } = await supabase.from("expenses").insert(payload);
-
-      if (error) {
-        const fallback = await supabase.from("expenses").insert({
+      const payloadVariants = [
+        {
+          user_id: user.id,
+          amount: parsedAmount,
+          description: description.trim(),
+          category,
+          paid_by: paidBy,
+          expense_date: expenseDate,
+          reimbursed: false,
+          status: "unpaid",
+        },
+        {
+          owner_id: user.id,
+          amount: parsedAmount,
+          description: description.trim(),
+          category,
+          paid_by: paidBy,
+          expense_date: expenseDate,
+          reimbursed: false,
+          status: "unpaid",
+        },
+        {
           owner_id: user.id,
           montant: parsedAmount,
           label: description.trim(),
           categorie: category,
-          payer: paidBy,
+          parent: paidBy,
           date: expenseDate,
           status: "Non remboursé",
-        });
+        },
+      ];
 
-        if (fallback.error) {
-          setFormError(fallback.error.message);
-          return;
+      let lastInsertError: string | null = null;
+
+      for (const payload of payloadVariants) {
+        const { error } = await supabase.from("expenses").insert(payload);
+        if (!error) {
+          lastInsertError = null;
+          break;
         }
+        lastInsertError = error.message;
+      }
+
+      if (lastInsertError) {
+        setFormError(lastInsertError);
+        return;
       }
 
       await refreshExpenses();
