@@ -156,6 +156,17 @@ function getReceiptType(url: string | null): "image" | "pdf" | "other" {
   return "other";
 }
 
+function isReceiptFromBucket(url: string | null): boolean {
+  if (!url) {
+    return false;
+  }
+
+  return (
+    url.includes("/storage/v1/object/public/receipts/") ||
+    url.includes("/storage/v1/object/sign/receipts/")
+  );
+}
+
 function toDateOnlyValue(dateInput: string): string | null {
   const parsedDate = new Date(dateInput);
   if (Number.isNaN(parsedDate.getTime())) {
@@ -192,8 +203,7 @@ export default function ExpensesPage() {
   const [showAllHistory] = useState(true);
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
-  const [receiptViewerUrl, setReceiptViewerUrl] = useState<string | null>(null);
-  const [receiptViewerIsPdf, setReceiptViewerIsPdf] = useState(false);
+  const [receiptViewerExpense, setReceiptViewerExpense] = useState<ExpenseItem | null>(null);
 
   const [formError, setFormError] = useState("");
   const [listError, setListError] = useState("");
@@ -261,14 +271,12 @@ export default function ExpensesPage() {
     }
   };
 
-  const openReceiptViewer = (url: string) => {
-    setReceiptViewerUrl(url);
-    setReceiptViewerIsPdf(url.toLowerCase().includes(".pdf"));
+  const openReceiptViewer = (expense: ExpenseItem) => {
+    setReceiptViewerExpense(expense);
   };
 
   const closeReceiptViewer = () => {
-    setReceiptViewerUrl(null);
-    setReceiptViewerIsPdf(false);
+    setReceiptViewerExpense(null);
   };
 
   const refreshExpenses = async (client = getSupabaseBrowserClient()) => {
@@ -302,6 +310,9 @@ export default function ExpensesPage() {
           statusText === "remboursé" ||
           statusText === "reimbursed";
 
+        const rawReceiptUrl = row.receipt_url ?? row.receipt_file_url ?? row.justificatif_url ?? row.file_url ?? null;
+        const normalizedReceiptUrl = isReceiptFromBucket(rawReceiptUrl) ? rawReceiptUrl : null;
+
         return {
           id: String(row.id),
           amount: parsedAmount,
@@ -310,7 +321,7 @@ export default function ExpensesPage() {
           paidBy: normalizePaidBy(row.paid_by ?? row.payer ?? row.parent),
           expenseDate: rawDate,
           reimbursed,
-          receiptUrl: row.receipt_url ?? row.receipt_file_url ?? row.justificatif_url ?? row.file_url ?? null,
+          receiptUrl: normalizedReceiptUrl,
         };
       })
       .filter((expense): expense is ExpenseItem => expense !== null);
@@ -862,7 +873,7 @@ export default function ExpensesPage() {
                       {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "image" && (
                         <button
                           type="button"
-                          onClick={() => openReceiptViewer(expense.receiptUrl!)}
+                          onClick={() => openReceiptViewer(expense)}
                           className="overflow-hidden rounded-lg border border-[#D0DFEE] bg-white transition hover:brightness-95"
                           title="Ouvrir la photo du reçu"
                         >
@@ -870,36 +881,14 @@ export default function ExpensesPage() {
                           <img
                             src={expense.receiptUrl}
                             alt="Miniature du reçu"
-                            className="h-12 w-12 object-cover"
+                            className="h-[60px] w-[60px] object-cover"
                           />
                         </button>
                       )}
 
-                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "pdf" && (
-                        <a
-                          href={expense.receiptUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-full border border-[#D0DFEE] bg-white px-3 py-1 text-xs font-semibold text-[#2E6395] transition hover:bg-[#F3F8FD]"
-                          title="Ouvrir le PDF"
-                        >
-                          📄 PDF
-                        </a>
+                      {(!expense.receiptUrl || getReceiptType(expense.receiptUrl) !== "image") && (
+                        <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>
                       )}
-
-                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "other" && (
-                        <a
-                          href={expense.receiptUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-full border border-[#D0DFEE] bg-white px-3 py-1 text-xs font-semibold text-[#2E6395] transition hover:bg-[#F3F8FD]"
-                          title="Ouvrir le reçu"
-                        >
-                          📎 Reçu
-                        </a>
-                      )}
-
-                      {!expense.receiptUrl && <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -942,25 +931,28 @@ export default function ExpensesPage() {
         </section>
       </main>
 
-      {receiptViewerUrl && (
+      {receiptViewerExpense?.receiptUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-          <div className="relative h-[85vh] w-full max-w-4xl rounded-2xl border border-white/70 bg-white p-4 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+          <div className="w-full max-w-3xl rounded-2xl border border-white/70 bg-white p-5 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <div className="overflow-hidden rounded-xl border border-[#D7E6F4] bg-[#F8FBFF]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={receiptViewerExpense.receiptUrl} alt="Reçu" className="max-h-[70vh] w-full object-contain" />
+            </div>
+
+            <div className="mt-4 space-y-1">
+              <p className="text-sm text-[#5E7A95]">Montant</p>
+              <p className="text-base font-semibold text-[#17324D]">{formatCurrency(receiptViewerExpense.amount)}$</p>
+              <p className="pt-1 text-sm text-[#5E7A95]">Description</p>
+              <p className="text-sm font-medium text-[#2D4B68]">{receiptViewerExpense.description}</p>
+            </div>
+
             <button
               type="button"
               onClick={closeReceiptViewer}
-              className="absolute top-3 right-3 z-10 rounded-lg border border-[#D0DFEE] bg-white px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
+              className="mt-5 w-full rounded-xl border border-[#D0DFEE] bg-white px-4 py-2.5 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
             >
-              ✕
+              Fermer
             </button>
-
-            <div className="h-full w-full overflow-hidden rounded-xl border border-[#D7E6F4] bg-[#F8FBFF]">
-              {receiptViewerIsPdf ? (
-                <iframe src={receiptViewerUrl} title="Reçu PDF" className="h-full w-full" />
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={receiptViewerUrl} alt="Reçu" className="h-full w-full object-contain" />
-              )}
-            </div>
           </div>
         </div>
       )}
