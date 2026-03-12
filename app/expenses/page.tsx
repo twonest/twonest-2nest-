@@ -189,7 +189,7 @@ export default function ExpensesPage() {
   const [receiptMimeType, setReceiptMimeType] = useState("");
 
   const [selectedMonth, setSelectedMonth] = useState(() => toMonthValue(new Date().toISOString()));
-  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [showAllHistory] = useState(true);
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [receiptViewerUrl, setReceiptViewerUrl] = useState<string | null>(null);
@@ -547,23 +547,6 @@ export default function ExpensesPage() {
     }
   };
 
-  const monthOptions = useMemo(() => {
-    return Array.from(new Set(expenses.map((expense) => toMonthValue(expense.expenseDate)).filter(Boolean))).sort((a, b) =>
-      a < b ? 1 : -1,
-    );
-  }, [expenses]);
-
-  useEffect(() => {
-    if (showAllHistory || monthOptions.length === 0) {
-      return;
-    }
-
-    const hasExpensesForSelectedMonth = expenses.some((expense) => toMonthValue(expense.expenseDate) === selectedMonth);
-    if (!hasExpensesForSelectedMonth) {
-      setSelectedMonth(monthOptions[0]);
-    }
-  }, [expenses, monthOptions, selectedMonth, showAllHistory]);
-
   const filteredExpenses = useMemo(() => {
     let scopedExpenses = expenses;
 
@@ -795,56 +778,9 @@ export default function ExpensesPage() {
           <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">TABLEAU DE BORD DES DÉPENSES</p>
           <h2 className="mb-3 mt-1 text-xl font-semibold text-[#17324D]">Suivi et remboursements</h2>
 
-          <div className="mb-4 flex items-center justify-between gap-2 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-3 py-3 sm:px-4">
-            <button
-              type="button"
-              onClick={() => {
-                setShowAllHistory(false);
-                setSelectedMonth((current) => shiftMonth(current, -1));
-              }}
-              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
-            >
-              ←
-            </button>
-
-            <p className="text-center text-base font-semibold text-[#1F4D77] sm:text-lg">
-              {showAllHistory
-                ? "Tout l'historique"
-                : `${formatMonthLabel(shiftMonth(selectedMonth, -1))} | ${formatMonthLabel(selectedMonth)} | ${formatMonthLabel(shiftMonth(selectedMonth, 1))}`}
-            </p>
-
-            <button
-              type="button"
-              onClick={() => {
-                setShowAllHistory(false);
-                setSelectedMonth((current) => shiftMonth(current, 1));
-              }}
-              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
-            >
-              →
-            </button>
-          </div>
-
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowAllHistory(true)}
-              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
-            >
-              Voir tout l'historique
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowAllHistory(false);
-                if (monthOptions.length > 0 && !monthOptions.includes(selectedMonth)) {
-                  setSelectedMonth(monthOptions[0]);
-                }
-              }}
-              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
-            >
-              Revenir au mois
-            </button>
+          <div className="mb-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
+            <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">HISTORIQUE</p>
+            <p className="mt-1 text-lg font-semibold text-[#1F4D77]">Toutes les dépenses</p>
           </div>
 
           <div className="mb-4 rounded-2xl border border-[#D7E6F4] bg-[#F8FBFF] p-3">
