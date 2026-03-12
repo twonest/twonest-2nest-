@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -17,6 +17,7 @@ type ExpenseItem = {
   paidBy: PaidBy;
   expenseDate: string;
   reimbursed: boolean;
+  receiptUrl: string | null;
 };
 
 type SupabaseExpenseRow = {
@@ -37,6 +38,10 @@ type SupabaseExpenseRow = {
   reimbursed?: boolean;
   reimbursed_at?: string | null;
   status?: string;
+  receipt_url?: string;
+  receipt_file_url?: string;
+  justificatif_url?: string;
+  file_url?: string;
 };
 
 type ToastState = {
@@ -118,9 +123,14 @@ export default function ExpensesPage() {
   const [category, setCategory] = useState<ExpenseCategory>("Médical");
   const [paidBy, setPaidBy] = useState<PaidBy>("parent1");
   const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
+  const [receiptMimeType, setReceiptMimeType] = useState("");
 
   const [selectedMonth, setSelectedMonth] = useState("all");
   const [selectedCategory, setSelectedCategory] = useState<ExpenseCategory | "all">("all");
+  const [receiptViewerUrl, setReceiptViewerUrl] = useState<string | null>(null);
+  const [receiptViewerIsPdf, setReceiptViewerIsPdf] = useState(false);
 
   const [formError, setFormError] = useState("");
   const [listError, setListError] = useState("");
@@ -134,6 +144,56 @@ export default function ExpensesPage() {
     const timeout = setTimeout(() => setToast(null), 2500);
     return () => clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    return () => {
+      if (receiptPreviewUrl) {
+        URL.revokeObjectURL(receiptPreviewUrl);
+      }
+    };
+  }, [receiptPreviewUrl]);
+
+  const onReceiptChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+
+    if (receiptPreviewUrl) {
+      URL.revokeObjectURL(receiptPreviewUrl);
+      setReceiptPreviewUrl(null);
+    }
+
+    if (!file) {
+      setReceiptFile(null);
+      setReceiptMimeType("");
+      return;
+    }
+
+    const allowedTypes = ["image/jpeg", "image/png", "application/pdf"];
+    if (!allowedTypes.includes(file.type)) {
+      setFormError("Format de reçu invalide. Utilise JPG, PNG ou PDF.");
+      setReceiptFile(null);
+      setReceiptMimeType("");
+      event.target.value = "";
+      return;
+    }
+
+    setFormError("");
+    setReceiptFile(file);
+    setReceiptMimeType(file.type);
+
+    if (file.type.startsWith("image/")) {
+      setReceiptPreviewUrl(URL.createObjectURL(file));
+    }
+  };
+
+  const openReceiptViewer = (url: string) => {
+    setReceiptViewerUrl(url);
+    setReceiptViewerIsPdf(url.toLowerCase().includes(".pdf"));
+  };
+
+  const closeReceiptViewer = () => {
+    setReceiptViewerUrl(null);
+    setReceiptViewerIsPdf(false);
+  };
 
   const refreshExpenses = async (client = getSupabaseBrowserClient()) => {
     let query = client.from("expenses").select("*");
@@ -174,6 +234,7 @@ export default function ExpensesPage() {
           paidBy: normalizePaidBy(row.paid_by ?? row.payer ?? row.parent),
           expenseDate: rawDate,
           reimbursed,
+          receiptUrl: row.receipt_url ?? row.receipt_file_url ?? row.justificatif_url ?? row.file_url ?? null,
         };
       })
       .filter((expense): expense is ExpenseItem => expense !== null);
@@ -241,6 +302,28 @@ export default function ExpensesPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
+      let uploadedReceiptUrl: string | null = null;
+
+      if (receiptFile) {
+        const safeName = receiptFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const path = `${user.id}/${Date.now()}-${safeName}`;
+
+        const { error: uploadError } = await supabase.storage.from("receipts").upload(path, receiptFile, {
+          upsert: true,
+        });
+
+        if (uploadError) {
+          setFormError(`${uploadError.message}. Vérifie que le bucket 'receipts' existe et est accessible.`);
+          return;
+        }
+
+        const {
+          data: { publicUrl },
+        } = supabase.storage.from("receipts").getPublicUrl(path);
+
+        uploadedReceiptUrl = publicUrl;
+      }
+
       const payloadVariants = [
         {
           user_id: user.id,
@@ -249,6 +332,7 @@ export default function ExpensesPage() {
           category,
           paid_by: paidBy,
           expense_date: expenseDate,
+          receipt_url: uploadedReceiptUrl,
           reimbursed: false,
           status: "unpaid",
         },
@@ -259,8 +343,19 @@ export default function ExpensesPage() {
           category,
           paid_by: paidBy,
           expense_date: expenseDate,
+          receipt_file_url: uploadedReceiptUrl,
           reimbursed: false,
           status: "unpaid",
+        },
+        {
+          owner_id: user.id,
+          montant: parsedAmount,
+          label: description.trim(),
+          categorie: category,
+          parent: paidBy,
+          date: expenseDate,
+          justificatif_url: uploadedReceiptUrl,
+          status: "Non remboursé",
         },
         {
           owner_id: user.id,
@@ -295,6 +390,12 @@ export default function ExpensesPage() {
       setCategory("Médical");
       setPaidBy("parent1");
       setExpenseDate(new Date().toISOString().slice(0, 10));
+      setReceiptFile(null);
+      setReceiptMimeType("");
+      if (receiptPreviewUrl) {
+        URL.revokeObjectURL(receiptPreviewUrl);
+      }
+      setReceiptPreviewUrl(null);
       setToast({ message: "Dépense ajoutée.", variant: "success" });
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Erreur pendant l'ajout de la dépense.");
@@ -504,6 +605,31 @@ export default function ExpensesPage() {
               />
             </div>
 
+            <div className="sm:col-span-2 rounded-xl border border-[#D8E4F0] bg-[#F8FBFF] p-3">
+              <label htmlFor="receipt" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-[#E8F2FC] px-4 py-2 text-sm font-semibold text-[#2E6395] transition hover:brightness-95">
+                📎 Ajouter un reçu
+              </label>
+              <input
+                id="receipt"
+                type="file"
+                accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+                onChange={onReceiptChange}
+                className="hidden"
+              />
+              <p className="mt-2 text-xs text-[#5E7A95]">Formats acceptés: JPG, PNG, PDF</p>
+
+              {receiptFile && (
+                <p className="mt-2 text-sm font-medium text-[#2D4B68]">Fichier sélectionné: {receiptFile.name}</p>
+              )}
+
+              {receiptPreviewUrl && receiptMimeType.startsWith("image/") && (
+                <div className="mt-3 overflow-hidden rounded-xl border border-[#D0DFEE] bg-white p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={receiptPreviewUrl} alt="Aperçu du reçu" className="max-h-52 w-auto rounded-lg object-contain" />
+                </div>
+              )}
+            </div>
+
             <button
               type="submit"
               disabled={isCreatingExpense}
@@ -597,15 +723,29 @@ export default function ExpensesPage() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        expense.reimbursed
-                          ? "border border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]"
-                          : "border border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]"
-                      }`}
-                    >
-                      {expense.reimbursed ? "Remboursé" : "Non remboursé"}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                          expense.reimbursed
+                            ? "border border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]"
+                            : "border border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]"
+                        }`}
+                      >
+                        {expense.reimbursed ? "Remboursé" : "Non remboursé"}
+                      </span>
+                      {expense.receiptUrl ? (
+                        <button
+                          type="button"
+                          onClick={() => openReceiptViewer(expense.receiptUrl!)}
+                          className="rounded-full border border-[#D0DFEE] bg-white px-3 py-1 text-xs font-semibold text-[#2E6395] transition hover:bg-[#F3F8FD]"
+                          title="Ouvrir le reçu"
+                        >
+                          📎 Reçu
+                        </button>
+                      ) : (
+                        <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>
+                      )}
+                    </div>
 
                     {!expense.reimbursed && (
                       <button
@@ -624,6 +764,29 @@ export default function ExpensesPage() {
           </div>
         </section>
       </main>
+
+      {receiptViewerUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
+          <div className="relative h-[85vh] w-full max-w-4xl rounded-2xl border border-white/70 bg-white p-4 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <button
+              type="button"
+              onClick={closeReceiptViewer}
+              className="absolute top-3 right-3 z-10 rounded-lg border border-[#D0DFEE] bg-white px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
+            >
+              ✕
+            </button>
+
+            <div className="h-full w-full overflow-hidden rounded-xl border border-[#D7E6F4] bg-[#F8FBFF]">
+              {receiptViewerIsPdf ? (
+                <iframe src={receiptViewerUrl} title="Reçu PDF" className="h-full w-full" />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={receiptViewerUrl} alt="Reçu" className="h-full w-full object-contain" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div
