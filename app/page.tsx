@@ -1,3 +1,4 @@
+cat > /workspaces/twonest-2nest-/app/page.tsx << 'EOF'
 export default function Home() {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center" style={{backgroundColor: '#f0f7ff'}}>
@@ -14,3 +15,4 @@ export default function Home() {
     </div>
   )
 }
+EOF
