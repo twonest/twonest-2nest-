@@ -40,8 +40,12 @@ type SupabaseExpenseRow = {
   status?: string;
   receipt_url?: string;
   receipt_file_url?: string;
+  receipt_path?: string;
+  receipt?: string;
   justificatif_url?: string;
   file_url?: string;
+  file_path?: string;
+  attachment_url?: string;
 };
 
 type ToastState = {
@@ -212,8 +216,14 @@ async function normalizeReceiptUrl(
     .from("receipts")
     .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
 
-  if (!signedError && signedData?.signedUrl && isReceiptFromBucket(signedData.signedUrl)) {
-    return signedData.signedUrl;
+  if (!signedError && signedData?.signedUrl) {
+    const absoluteSignedUrl = signedData.signedUrl.startsWith("http")
+      ? signedData.signedUrl
+      : `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}${signedData.signedUrl}`;
+
+    if (isReceiptFromBucket(absoluteSignedUrl)) {
+      return absoluteSignedUrl;
+    }
   }
 
   const {
@@ -366,7 +376,16 @@ export default function ExpensesPage() {
           statusText === "remboursé" ||
           statusText === "reimbursed";
 
-        const rawReceiptUrl = row.receipt_url ?? row.receipt_file_url ?? row.justificatif_url ?? row.file_url ?? null;
+        const rawReceiptUrl =
+          row.receipt_url ??
+          row.receipt_file_url ??
+          row.receipt_path ??
+          row.receipt ??
+          row.justificatif_url ??
+          row.file_url ??
+          row.file_path ??
+          row.attachment_url ??
+          null;
         const normalizedReceiptUrl = await normalizeReceiptUrl(rawReceiptUrl, client);
 
         return {
