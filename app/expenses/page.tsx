@@ -156,6 +156,17 @@ function getReceiptType(url: string | null): "image" | "pdf" | "other" {
   return "other";
 }
 
+function toDateOnlyValue(dateInput: string): string | null {
+  const parsedDate = new Date(dateInput);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  const month = `${parsedDate.getMonth() + 1}`.padStart(2, "0");
+  const day = `${parsedDate.getDate()}`.padStart(2, "0");
+  return `${parsedDate.getFullYear()}-${month}-${day}`;
+}
+
 export default function ExpensesPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -179,6 +190,8 @@ export default function ExpensesPage() {
 
   const [selectedMonth, setSelectedMonth] = useState(() => toMonthValue(new Date().toISOString()));
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
   const [receiptViewerUrl, setReceiptViewerUrl] = useState<string | null>(null);
   const [receiptViewerIsPdf, setReceiptViewerIsPdf] = useState(false);
 
@@ -552,15 +565,37 @@ export default function ExpensesPage() {
   }, [expenses, monthOptions, selectedMonth, showAllHistory]);
 
   const filteredExpenses = useMemo(() => {
-    if (showAllHistory) {
-      return expenses;
+    let scopedExpenses = expenses;
+
+    if (!showAllHistory) {
+      scopedExpenses = expenses.filter((expense) => {
+        const month = toMonthValue(expense.expenseDate);
+        return month === selectedMonth;
+      });
     }
 
-    return expenses.filter((expense) => {
-      const month = toMonthValue(expense.expenseDate);
-      return month === selectedMonth;
+    const hasPeriodFilter = periodStart.length > 0 || periodEnd.length > 0;
+    if (!hasPeriodFilter) {
+      return scopedExpenses;
+    }
+
+    return scopedExpenses.filter((expense) => {
+      const expenseDateOnly = toDateOnlyValue(expense.expenseDate);
+      if (!expenseDateOnly) {
+        return false;
+      }
+
+      if (periodStart && expenseDateOnly < periodStart) {
+        return false;
+      }
+
+      if (periodEnd && expenseDateOnly > periodEnd) {
+        return false;
+      }
+
+      return true;
     });
-  }, [expenses, selectedMonth, showAllHistory]);
+  }, [expenses, periodEnd, periodStart, selectedMonth, showAllHistory]);
 
   const monthTotal = useMemo(() => {
     return filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0);
@@ -810,6 +845,36 @@ export default function ExpensesPage() {
             >
               Revenir au mois
             </button>
+          </div>
+
+          <div className="mb-4 rounded-2xl border border-[#D7E6F4] bg-[#F8FBFF] p-3">
+            <p className="mb-2 text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">PÉRIODE</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <input
+                type="date"
+                value={periodStart}
+                onChange={(event) => setPeriodStart(event.target.value)}
+                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-sm text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                aria-label="Date de début"
+              />
+              <input
+                type="date"
+                value={periodEnd}
+                onChange={(event) => setPeriodEnd(event.target.value)}
+                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-sm text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                aria-label="Date de fin"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setPeriodStart("");
+                  setPeriodEnd("");
+                }}
+                className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                Effacer la période
+              </button>
+            </div>
           </div>
 
           {listError && (
