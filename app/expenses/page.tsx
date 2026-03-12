@@ -117,6 +117,7 @@ export default function ExpensesPage() {
   const [isLoadingExpenses, setIsLoadingExpenses] = useState(true);
   const [isCreatingExpense, setIsCreatingExpense] = useState(false);
   const [isMarkingReimbursed, setIsMarkingReimbursed] = useState(false);
+  const [deletingExpenseId, setDeletingExpenseId] = useState<string | null>(null);
 
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -437,6 +438,40 @@ export default function ExpensesPage() {
     }
   };
 
+  const onDeleteExpense = async (expense: ExpenseItem) => {
+    const shouldDelete = window.confirm("Supprimer cette dépense ? Cette action est définitive.");
+    if (!shouldDelete) {
+      return;
+    }
+
+    setDeletingExpenseId(expense.id);
+    setListError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.from("expenses").delete().eq("id", expense.id);
+
+      if (error) {
+        setListError(error.message);
+        return;
+      }
+
+      if (expense.receiptUrl?.includes("/storage/v1/object/public/receipts/")) {
+        const receiptPath = decodeURIComponent(expense.receiptUrl.split("/storage/v1/object/public/receipts/")[1] ?? "");
+        if (receiptPath) {
+          await supabase.storage.from("receipts").remove([receiptPath]);
+        }
+      }
+
+      await refreshExpenses();
+      setToast({ message: "Dépense supprimée.", variant: "success" });
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : "Erreur pendant la suppression.");
+    } finally {
+      setDeletingExpenseId(null);
+    }
+  };
+
   const monthOptions = useMemo(() => {
     const months = Array.from(new Set(expenses.map((expense) => toMonthValue(expense.expenseDate)).filter(Boolean))).sort(
       (a, b) => (a < b ? 1 : -1),
@@ -747,16 +782,27 @@ export default function ExpensesPage() {
                       )}
                     </div>
 
-                    {!expense.reimbursed && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!expense.reimbursed && (
+                        <button
+                          type="button"
+                          onClick={() => onMarkReimbursed(expense.id)}
+                          disabled={isMarkingReimbursed || deletingExpenseId === expense.id}
+                          className="rounded-xl bg-[#4A90D9] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          Marquer comme remboursé
+                        </button>
+                      )}
+
                       <button
                         type="button"
-                        onClick={() => onMarkReimbursed(expense.id)}
-                        disabled={isMarkingReimbursed}
-                        className="rounded-xl bg-[#4A90D9] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                        onClick={() => onDeleteExpense(expense)}
+                        disabled={deletingExpenseId === expense.id || isMarkingReimbursed}
+                        className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm font-semibold text-[#8D3E45] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
                       >
-                        Marquer comme remboursé
+                        {deletingExpenseId === expense.id ? "Suppression..." : "Supprimer"}
                       </button>
-                    )}
+                    </div>
                   </div>
                 </article>
               ))
