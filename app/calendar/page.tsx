@@ -38,6 +38,45 @@ type SupabaseEventRow = {
   parent_role?: string;
 };
 
+type SwapStatus = "pending" | "accepted" | "refused";
+
+type SwapRequest = {
+  id: string;
+  requesterUserId: string | null;
+  originalDate: string;
+  proposedDate: string;
+  reason: string;
+  status: SwapStatus;
+  responseReason: string | null;
+  createdAt: string | null;
+  respondedAt: string | null;
+};
+
+type SupabaseSwapRow = {
+  id?: string | number;
+  requester_user_id?: string;
+  user_id?: string;
+  owner_id?: string;
+  original_date?: string;
+  proposed_date?: string;
+  current_date?: string;
+  new_date?: string;
+  reason?: string;
+  request_reason?: string;
+  status?: string;
+  response_reason?: string;
+  refusal_reason?: string;
+  created_at?: string;
+  responded_at?: string;
+};
+
+type ToastState = {
+  message: string;
+  variant: "success";
+};
+
+type DecisionType = "accept" | "refuse";
+
 const localizer = momentLocalizer(moment);
 const EVENT_TYPES: EventType[] = ["Garde", "Médecin", "École", "Activité"];
 
@@ -45,6 +84,24 @@ function formatForDateTimeLocal(date: Date): string {
   const offset = date.getTimezoneOffset();
   const localDate = new Date(date.getTime() - offset * 60_000);
   return localDate.toISOString().slice(0, 16);
+}
+
+function formatForDateInput(date: Date): string {
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60_000);
+  return localDate.toISOString().slice(0, 10);
+}
+
+function formatDateLabel(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString("fr-CA", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
 export default function CalendarPage() {
@@ -55,13 +112,25 @@ export default function CalendarPage() {
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+  const [swapRequests, setSwapRequests] = useState<SwapRequest[]>([]);
+  const [isLoadingSwapRequests, setIsLoadingSwapRequests] = useState(true);
+
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isCreatingSwapRequest, setIsCreatingSwapRequest] = useState(false);
+  const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
+
   const [formOpen, setFormOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [swapFormOpen, setSwapFormOpen] = useState(false);
+  const [decisionOpen, setDecisionOpen] = useState(false);
+
   const [formError, setFormError] = useState("");
   const [editError, setEditError] = useState("");
+  const [swapError, setSwapError] = useState("");
+  const [decisionError, setDecisionError] = useState("");
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   const [title, setTitle] = useState("");
   const [eventType, setEventType] = useState<EventType>("Garde");
@@ -74,11 +143,119 @@ export default function CalendarPage() {
   const [editStartAt, setEditStartAt] = useState("");
   const [editEndAt, setEditEndAt] = useState("");
 
+  const [originalDate, setOriginalDate] = useState(() => formatForDateInput(new Date()));
+  const [proposedDate, setProposedDate] = useState(() => formatForDateInput(new Date(Date.now() + 24 * 60 * 60 * 1000)));
+  const [swapReason, setSwapReason] = useState("");
+
+  const [decisionType, setDecisionType] = useState<DecisionType>("accept");
+  const [decisionRequestId, setDecisionRequestId] = useState("");
+  const [decisionReason, setDecisionReason] = useState("");
+
   const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
+
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+
+    const timeout = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(timeout);
+  }, [toast]);
 
   useEffect(() => {
     moment.locale("fr");
   }, []);
+
+  const refreshEvents = async (client = getSupabaseBrowserClient()) => {
+    let query = client.from("events").select("*");
+    let { data, error } = await query.order("start_at", { ascending: true });
+
+    if (error) {
+      const fallback = await client.from("events").select("*");
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error) {
+      setFormError(error.message);
+      return;
+    }
+
+    const mapped = (data as SupabaseEventRow[])
+      .map((row): CalendarEvent | null => {
+        const rowStart = row.start_at ?? row.start_date ?? row.start;
+        const rowEnd = row.end_at ?? row.end_date ?? row.end;
+
+        if (!row.id || !row.title || !rowStart || !rowEnd || !row.type) {
+          return null;
+        }
+
+        const startDate = new Date(rowStart);
+        const endDate = new Date(rowEnd);
+
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+          return null;
+        }
+
+        return {
+          id: String(row.id),
+          title: row.title,
+          type: row.type,
+          start: startDate,
+          end: endDate,
+          ownerUserId: row.user_id ?? row.owner_id ?? null,
+          parent: row.parent ?? row.parent_role ?? null,
+        };
+      })
+      .filter((event): event is CalendarEvent => event !== null);
+
+    setEvents(mapped);
+  };
+
+  const refreshSwapRequests = async (client = getSupabaseBrowserClient()) => {
+    let query = client.from("swap_requests").select("*");
+    let { data, error } = await query.order("created_at", { ascending: false });
+
+    if (error) {
+      const fallback = await client.from("swap_requests").select("*");
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error) {
+      setSwapError(error.message);
+      return;
+    }
+
+    const mapped = (data as SupabaseSwapRow[])
+      .map((row): SwapRequest | null => {
+        const rowOriginalDate = row.original_date ?? row.current_date;
+        const rowProposedDate = row.proposed_date ?? row.new_date;
+
+        if (!row.id || !rowOriginalDate || !rowProposedDate) {
+          return null;
+        }
+
+        const statusCandidate = row.status ?? "pending";
+        const status: SwapStatus =
+          statusCandidate === "accepted" || statusCandidate === "refused" ? statusCandidate : "pending";
+
+        return {
+          id: String(row.id),
+          requesterUserId: row.requester_user_id ?? row.user_id ?? row.owner_id ?? null,
+          originalDate: rowOriginalDate,
+          proposedDate: rowProposedDate,
+          reason: row.reason ?? row.request_reason ?? "",
+          status,
+          responseReason: row.response_reason ?? row.refusal_reason ?? null,
+          createdAt: row.created_at ?? null,
+          respondedAt: row.responded_at ?? null,
+        };
+      })
+      .filter((request): request is SwapRequest => request !== null);
+
+    setSwapRequests(mapped);
+  };
 
   useEffect(() => {
     let supabase;
@@ -93,10 +270,11 @@ export default function CalendarPage() {
       );
       setCheckingSession(false);
       setIsLoadingEvents(false);
+      setIsLoadingSwapRequests(false);
       return;
     }
 
-    const loadUserAndEvents = async () => {
+    const loadInitialData = async () => {
       const { data: userData } = await supabase.auth.getUser();
 
       if (!userData.user) {
@@ -107,47 +285,12 @@ export default function CalendarPage() {
       setUser(userData.user);
       setCheckingSession(false);
 
-      const { data, error } = await supabase.from("events").select("*").order("start_at", { ascending: true });
-
-      if (error) {
-        setFormError(error.message);
-        setIsLoadingEvents(false);
-        return;
-      }
-
-      const mapped = (data as SupabaseEventRow[])
-        .map((row): CalendarEvent | null => {
-          const rowStart = row.start_at ?? row.start_date ?? row.start;
-          const rowEnd = row.end_at ?? row.end_date ?? row.end;
-
-          if (!row.id || !row.title || !rowStart || !rowEnd || !row.type) {
-            return null;
-          }
-
-          const startDate = new Date(rowStart);
-          const endDate = new Date(rowEnd);
-
-          if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-            return null;
-          }
-
-          return {
-            id: String(row.id),
-            title: row.title,
-            type: row.type,
-            start: startDate,
-            end: endDate,
-            ownerUserId: row.user_id ?? row.owner_id ?? null,
-            parent: row.parent ?? row.parent_role ?? null,
-          };
-        })
-        .filter((event): event is CalendarEvent => event !== null);
-
-      setEvents(mapped);
+      await Promise.all([refreshEvents(supabase), refreshSwapRequests(supabase)]);
       setIsLoadingEvents(false);
+      setIsLoadingSwapRequests(false);
     };
 
-    loadUserAndEvents();
+    loadInitialData();
 
     const {
       data: { subscription },
@@ -188,44 +331,30 @@ export default function CalendarPage() {
     setEditingEventId("");
   };
 
-  const refreshEvents = async () => {
-    const supabase = getSupabaseBrowserClient();
-    const { data, error } = await supabase.from("events").select("*").order("start_at", { ascending: true });
+  const openSwapForm = () => {
+    setSwapError("");
+    setSwapFormOpen(true);
+  };
 
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
+  const closeSwapForm = () => {
+    setSwapFormOpen(false);
+    setSwapError("");
+  };
 
-    const mapped = (data as SupabaseEventRow[])
-      .map((row): CalendarEvent | null => {
-        const rowStart = row.start_at ?? row.start_date ?? row.start;
-        const rowEnd = row.end_at ?? row.end_date ?? row.end;
+  const openDecisionModal = (request: SwapRequest, type: DecisionType) => {
+    setDecisionError("");
+    setDecisionType(type);
+    setDecisionRequestId(request.id);
+    setDecisionReason("");
+    setDecisionOpen(true);
+  };
 
-        if (!row.id || !row.title || !rowStart || !rowEnd || !row.type) {
-          return null;
-        }
-
-        const startDate = new Date(rowStart);
-        const endDate = new Date(rowEnd);
-
-        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-          return null;
-        }
-
-        return {
-          id: String(row.id),
-          title: row.title,
-          type: row.type,
-          start: startDate,
-          end: endDate,
-          ownerUserId: row.user_id ?? row.owner_id ?? null,
-          parent: row.parent ?? row.parent_role ?? null,
-        };
-      })
-      .filter((event): event is CalendarEvent => event !== null);
-
-    setEvents(mapped);
+  const closeDecisionModal = () => {
+    setDecisionOpen(false);
+    setDecisionError("");
+    setDecisionReason("");
+    setDecisionRequestId("");
+    setDecisionType("accept");
   };
 
   const onCreateEvent = async (event: FormEvent<HTMLFormElement>) => {
@@ -285,6 +414,7 @@ export default function CalendarPage() {
       setStartAt(formatForDateTimeLocal(new Date()));
       setEndAt(formatForDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
       setFormOpen(false);
+      setToast({ message: "Événement créé avec succès.", variant: "success" });
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Erreur pendant l'enregistrement de l'événement.");
     } finally {
@@ -350,6 +480,7 @@ export default function CalendarPage() {
 
       await refreshEvents();
       closeEditForm();
+      setToast({ message: "Événement modifié avec succès.", variant: "success" });
     } catch (error) {
       setEditError(error instanceof Error ? error.message : "Erreur pendant la modification de l'événement.");
     } finally {
@@ -376,6 +507,7 @@ export default function CalendarPage() {
 
       await refreshEvents();
       closeEditForm();
+      setToast({ message: "Événement supprimé.", variant: "success" });
     } catch (error) {
       setEditError(error instanceof Error ? error.message : "Erreur pendant la suppression de l'événement.");
     } finally {
@@ -383,7 +515,132 @@ export default function CalendarPage() {
     }
   };
 
-  if (checkingSession || isLoadingEvents) {
+  const onCreateSwapRequest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!user || originalDate.length === 0 || proposedDate.length === 0 || swapReason.trim().length === 0) {
+      setSwapError("Tous les champs sont obligatoires.");
+      return;
+    }
+
+    setIsCreatingSwapRequest(true);
+    setSwapError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const payload = {
+        requester_user_id: user.id,
+        original_date: originalDate,
+        proposed_date: proposedDate,
+        reason: swapReason.trim(),
+        status: "pending",
+      };
+
+      const { error } = await supabase.from("swap_requests").insert(payload);
+
+      if (error) {
+        const { error: fallbackError } = await supabase.from("swap_requests").insert({
+          user_id: user.id,
+          current_date: originalDate,
+          new_date: proposedDate,
+          reason: swapReason.trim(),
+          status: "pending",
+        });
+
+        if (fallbackError) {
+          setSwapError(fallbackError.message);
+          return;
+        }
+      }
+
+      await refreshSwapRequests();
+      setOriginalDate(formatForDateInput(new Date()));
+      setProposedDate(formatForDateInput(new Date(Date.now() + 24 * 60 * 60 * 1000)));
+      setSwapReason("");
+      closeSwapForm();
+      setToast({ message: "Demande envoyée au co-parent.", variant: "success" });
+    } catch (error) {
+      setSwapError(error instanceof Error ? error.message : "Erreur pendant la création de la demande.");
+    } finally {
+      setIsCreatingSwapRequest(false);
+    }
+  };
+
+  const onSubmitDecision = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!decisionRequestId) {
+      return;
+    }
+
+    if (decisionType === "refuse" && decisionReason.trim().length === 0) {
+      setDecisionError("Une raison est obligatoire pour refuser.");
+      return;
+    }
+
+    setIsSubmittingDecision(true);
+    setDecisionError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const newStatus = decisionType === "accept" ? "accepted" : "refused";
+
+      const { error } = await supabase
+        .from("swap_requests")
+        .update({
+          status: newStatus,
+          responded_at: new Date().toISOString(),
+          response_reason: decisionType === "refuse" ? decisionReason.trim() : null,
+        })
+        .eq("id", decisionRequestId);
+
+      if (error) {
+        const { error: fallbackError } = await supabase
+          .from("swap_requests")
+          .update({
+            status: newStatus,
+            refusal_reason: decisionType === "refuse" ? decisionReason.trim() : null,
+          })
+          .eq("id", decisionRequestId);
+
+        if (fallbackError) {
+          setDecisionError(fallbackError.message);
+          return;
+        }
+      }
+
+      await refreshSwapRequests();
+      closeDecisionModal();
+      setToast({
+        message: decisionType === "accept" ? "Demande acceptée." : "Demande refusée.",
+        variant: "success",
+      });
+    } catch (error) {
+      setDecisionError(error instanceof Error ? error.message : "Erreur pendant la mise à jour de la demande.");
+    } finally {
+      setIsSubmittingDecision(false);
+    }
+  };
+
+  const statusUi: Record<SwapStatus, { label: string; emoji: string; className: string }> = {
+    pending: {
+      label: "En attente",
+      emoji: "🟡",
+      className: "border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]",
+    },
+    accepted: {
+      label: "Acceptée",
+      emoji: "✅",
+      className: "border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]",
+    },
+    refused: {
+      label: "Refusée",
+      emoji: "❌",
+      className: "border-[#E3B4B8] bg-[#FFF4F5] text-[#8D3E45]",
+    },
+  };
+
+  if (checkingSession || isLoadingEvents || isLoadingSwapRequests) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#F6FAFF] to-[#EEF5FC] px-6">
         <p className="text-sm font-medium text-[#5B7691]">Chargement du calendrier...</p>
@@ -428,47 +685,135 @@ export default function CalendarPage() {
           </div>
         </header>
 
-        {formError && (
-          <p className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{formError}</p>
-        )}
+        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold text-[#17324D]">CALENDRIER</h2>
+            <button
+              type="button"
+              onClick={openForm}
+              className="inline-flex items-center justify-center rounded-xl bg-[#4A90D9] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105"
+            >
+              + Ajouter un événement
+            </button>
+          </div>
 
-        <p className="text-sm font-medium text-[#5B7691]">Clique sur un événement pour le modifier ou le supprimer.</p>
+          {formError && (
+            <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{formError}</p>
+          )}
 
-        <section className="overflow-hidden rounded-2xl border border-[#D7E6F4] bg-white p-2 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-4">
-          <Calendar
-            localizer={localizer}
-            events={events}
-            startAccessor="start"
-            endAccessor="end"
-            defaultView={Views.MONTH}
-            views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
-            style={{ height: 650 }}
-            titleAccessor={(event) => `${event.title} · ${event.type}`}
-            onSelectEvent={openEditForm}
-            eventPropGetter={(event) => {
-              const isParentOne = event.ownerUserId === user?.id || event.parent === "parent1";
-              return {
-                style: {
-                  backgroundColor: isParentOne ? "#4A90D9" : "#50C878",
-                  borderRadius: "10px",
-                  border: "none",
-                  color: "#ffffff",
-                  padding: "2px 6px",
-                  fontWeight: 600,
-                },
-              };
-            }}
-            messages={{
-              month: "Mois",
-              week: "Semaine",
-              day: "Jour",
-              agenda: "Agenda",
-              today: "Aujourd'hui",
-              previous: "Précédent",
-              next: "Suivant",
-              noEventsInRange: "Aucun événement sur cette période.",
-            }}
-          />
+          <p className="mb-3 text-sm font-medium text-[#5B7691]">Clique sur un événement pour le modifier ou le supprimer.</p>
+
+          <div className="overflow-hidden rounded-2xl border border-[#D7E6F4] bg-white p-2 sm:p-4">
+            <Calendar
+              localizer={localizer}
+              events={events}
+              startAccessor="start"
+              endAccessor="end"
+              defaultView={Views.MONTH}
+              views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
+              style={{ height: 640 }}
+              titleAccessor={(event) => `${event.title} · ${event.type}`}
+              onSelectEvent={openEditForm}
+              eventPropGetter={(event) => {
+                const isParentOne = event.ownerUserId === user?.id || event.parent === "parent1";
+                return {
+                  style: {
+                    backgroundColor: isParentOne ? "#4A90D9" : "#50C878",
+                    borderRadius: "10px",
+                    border: "none",
+                    color: "#ffffff",
+                    padding: "2px 6px",
+                    fontWeight: 600,
+                  },
+                };
+              }}
+              messages={{
+                month: "Mois",
+                week: "Semaine",
+                day: "Jour",
+                agenda: "Agenda",
+                today: "Aujourd'hui",
+                previous: "Précédent",
+                next: "Suivant",
+                noEventsInRange: "Aucun événement sur cette période.",
+              }}
+            />
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold text-[#17324D]">DEMANDES DE CHANGEMENT</h2>
+            <button
+              type="button"
+              onClick={openSwapForm}
+              className="inline-flex items-center justify-center rounded-xl bg-[#4A90D9] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105"
+            >
+              Demander un changement de garde
+            </button>
+          </div>
+
+          {swapError && (
+            <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{swapError}</p>
+          )}
+
+          <div className="space-y-3">
+            {swapRequests.length === 0 ? (
+              <p className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] px-4 py-3 text-sm text-[#4A6783]">
+                Aucune demande pour le moment.
+              </p>
+            ) : (
+              swapRequests.map((request) => {
+                const isMine = request.requesterUserId === user?.id;
+                const canModerate = !isMine && request.status === "pending";
+                const statusInfo = statusUi[request.status];
+
+                return (
+                  <article key={request.id} className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-[#17324D]">
+                          {formatDateLabel(request.originalDate)} → {formatDateLabel(request.proposedDate)}
+                        </p>
+                        <p className="mt-1 text-sm text-[#4A6783]">{request.reason || "Aucune raison précisée."}</p>
+                        <p className="mt-1 text-xs text-[#6B86A1]">
+                          {isMine ? "Demande envoyée par vous" : "Demande du co-parent"}
+                          {request.createdAt ? ` · ${new Date(request.createdAt).toLocaleString("fr-CA")}` : ""}
+                        </p>
+                        {request.responseReason && (
+                          <p className="mt-1 text-xs text-[#8D3E45]">Raison du refus: {request.responseReason}</p>
+                        )}
+                      </div>
+
+                      <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold ${statusInfo.className}`}>
+                        <span>{statusInfo.emoji}</span>
+                        <span>{statusInfo.label}</span>
+                      </span>
+                    </div>
+
+                    {canModerate && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openDecisionModal(request, "accept")}
+                          className="rounded-xl bg-[#50C878] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105"
+                        >
+                          Accepter
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openDecisionModal(request, "refuse")}
+                          className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm font-semibold text-[#8D3E45] transition hover:bg-[#FFECEF]"
+                        >
+                          Refuser + raison
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })
+            )}
+          </div>
         </section>
       </main>
 
@@ -654,6 +999,140 @@ export default function CalendarPage() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {swapFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-[#17324D]">Nouvelle demande de garde</h2>
+              <button
+                type="button"
+                onClick={closeSwapForm}
+                className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
+              >
+                ✕
+              </button>
+            </div>
+
+            {swapError && (
+              <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm text-[#8D3E45]">
+                {swapError}
+              </p>
+            )}
+
+            <form className="space-y-4" onSubmit={onCreateSwapRequest}>
+              <div>
+                <label htmlFor="originalDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Date originale
+                </label>
+                <input
+                  id="originalDate"
+                  type="date"
+                  value={originalDate}
+                  onChange={(event) => setOriginalDate(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="proposedDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Date proposée
+                </label>
+                <input
+                  id="proposedDate"
+                  type="date"
+                  value={proposedDate}
+                  onChange={(event) => setProposedDate(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="swapReason" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Raison
+                </label>
+                <textarea
+                  id="swapReason"
+                  value={swapReason}
+                  onChange={(event) => setSwapReason(event.target.value)}
+                  rows={4}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                  placeholder="Expliquez brièvement la demande..."
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isCreatingSwapRequest}
+                className="mt-2 w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isCreatingSwapRequest ? "Envoi..." : "Envoyer la demande"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {decisionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-[#17324D]">
+                {decisionType === "accept" ? "Accepter la demande" : "Refuser la demande"}
+              </h2>
+              <button
+                type="button"
+                onClick={closeDecisionModal}
+                className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
+              >
+                ✕
+              </button>
+            </div>
+
+            {decisionError && (
+              <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm text-[#8D3E45]">
+                {decisionError}
+              </p>
+            )}
+
+            <form className="space-y-4" onSubmit={onSubmitDecision}>
+              {decisionType === "refuse" && (
+                <div>
+                  <label htmlFor="decisionReason" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                    Raison du refus
+                  </label>
+                  <textarea
+                    id="decisionReason"
+                    value={decisionReason}
+                    onChange={(event) => setDecisionReason(event.target.value)}
+                    rows={4}
+                    className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    placeholder="Expliquez la raison du refus..."
+                  />
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSubmittingDecision}
+                className="w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isSubmittingDecision
+                  ? "Enregistrement..."
+                  : decisionType === "accept"
+                    ? "Confirmer l'acceptation"
+                    : "Confirmer le refus"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed right-4 bottom-4 z-[60] max-w-sm rounded-xl border border-[#BDDCC5] bg-[#F2FAF4] px-4 py-3 text-sm font-medium text-[#2D6940] shadow-[0_14px_30px_rgba(45,105,64,0.2)]">
+          {toast.message}
         </div>
       )}
     </div>
