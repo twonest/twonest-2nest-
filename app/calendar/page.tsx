@@ -104,6 +104,18 @@ function formatDateLabel(value: string): string {
   });
 }
 
+function formatMonthLabel(date: Date): string {
+  const label = date.toLocaleDateString("fr-CA", {
+    month: "long",
+    year: "numeric",
+  });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function shiftMonth(date: Date, delta: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
 export default function CalendarPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -150,6 +162,7 @@ export default function CalendarPage() {
   const [decisionType, setDecisionType] = useState<DecisionType>("accept");
   const [decisionRequestId, setDecisionRequestId] = useState("");
   const [decisionReason, setDecisionReason] = useState("");
+  const [calendarDate, setCalendarDate] = useState(() => new Date());
 
   const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
 
@@ -697,6 +710,28 @@ export default function CalendarPage() {
             </button>
           </div>
 
+          <div className="mb-4 flex items-center justify-between gap-2 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-3 py-3 sm:px-4">
+            <button
+              type="button"
+              onClick={() => setCalendarDate((current) => shiftMonth(current, -1))}
+              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+            >
+              ←
+            </button>
+
+            <p className="text-center text-base font-semibold text-[#1F4D77] sm:text-lg">
+              {formatMonthLabel(shiftMonth(calendarDate, -1))} | {formatMonthLabel(calendarDate)} | {formatMonthLabel(shiftMonth(calendarDate, 1))}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setCalendarDate((current) => shiftMonth(current, 1))}
+              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+            >
+              →
+            </button>
+          </div>
+
           {formError && (
             <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{formError}</p>
           )}
@@ -709,8 +744,11 @@ export default function CalendarPage() {
               events={events}
               startAccessor="start"
               endAccessor="end"
+              date={calendarDate}
+              onNavigate={(date) => setCalendarDate(date)}
               defaultView={Views.MONTH}
               views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
+              toolbar={false}
               style={{ height: 640 }}
               titleAccessor={(event) => `${event.title} · ${event.type}`}
               onSelectEvent={openEditForm}
