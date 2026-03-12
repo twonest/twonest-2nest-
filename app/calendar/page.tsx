@@ -79,6 +79,7 @@ type DecisionType = "accept" | "refuse";
 
 const localizer = momentLocalizer(moment);
 const EVENT_TYPES: EventType[] = ["Garde", "Médecin", "École", "Activité"];
+const SHARED_MONTH_KEY = "twonest.selectedMonth";
 
 function formatForDateTimeLocal(date: Date): string {
   const offset = date.getTimezoneOffset();
@@ -114,6 +115,23 @@ function formatMonthLabel(date: Date): string {
 
 function shiftMonth(date: Date, delta: number): Date {
   return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+function toMonthValue(date: Date): string {
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}`;
+}
+
+function fromMonthValue(monthValue: string): Date | null {
+  const [rawYear, rawMonth] = monthValue.split("-");
+  const year = Number(rawYear);
+  const month = Number(rawMonth);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  return new Date(year, month - 1, 1);
 }
 
 export default function CalendarPage() {
@@ -178,6 +196,22 @@ export default function CalendarPage() {
   useEffect(() => {
     moment.locale("fr");
   }, []);
+
+  useEffect(() => {
+    const storedMonth = window.localStorage.getItem(SHARED_MONTH_KEY);
+    if (!storedMonth) {
+      return;
+    }
+
+    const parsedDate = fromMonthValue(storedMonth);
+    if (parsedDate) {
+      setCalendarDate(parsedDate);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(SHARED_MONTH_KEY, toMonthValue(calendarDate));
+  }, [calendarDate]);
 
   const refreshEvents = async (client = getSupabaseBrowserClient()) => {
     let query = client.from("events").select("*");

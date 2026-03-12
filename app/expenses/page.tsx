@@ -50,6 +50,7 @@ type ToastState = {
 };
 
 const CATEGORIES: ExpenseCategory[] = ["Médical", "Scolaire", "Vêtements", "Activités", "Nourriture", "Autre"];
+const SHARED_MONTH_KEY = "twonest.selectedMonth";
 
 function parseAmount(value: number | string | undefined): number | null {
   if (typeof value === "number") {
@@ -177,6 +178,7 @@ export default function ExpensesPage() {
   const [receiptMimeType, setReceiptMimeType] = useState("");
 
   const [selectedMonth, setSelectedMonth] = useState(() => toMonthValue(new Date().toISOString()));
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const [receiptViewerUrl, setReceiptViewerUrl] = useState<string | null>(null);
   const [receiptViewerIsPdf, setReceiptViewerIsPdf] = useState(false);
 
@@ -192,6 +194,19 @@ export default function ExpensesPage() {
     const timeout = setTimeout(() => setToast(null), 2500);
     return () => clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    const storedMonth = window.localStorage.getItem(SHARED_MONTH_KEY);
+    if (storedMonth && /^\d{4}-\d{2}$/.test(storedMonth)) {
+      setSelectedMonth(storedMonth);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (/^\d{4}-\d{2}$/.test(selectedMonth)) {
+      window.localStorage.setItem(SHARED_MONTH_KEY, selectedMonth);
+    }
+  }, [selectedMonth]);
 
   useEffect(() => {
     return () => {
@@ -519,12 +534,33 @@ export default function ExpensesPage() {
     }
   };
 
+  const monthOptions = useMemo(() => {
+    return Array.from(new Set(expenses.map((expense) => toMonthValue(expense.expenseDate)).filter(Boolean))).sort((a, b) =>
+      a < b ? 1 : -1,
+    );
+  }, [expenses]);
+
+  useEffect(() => {
+    if (showAllHistory || monthOptions.length === 0) {
+      return;
+    }
+
+    const hasExpensesForSelectedMonth = expenses.some((expense) => toMonthValue(expense.expenseDate) === selectedMonth);
+    if (!hasExpensesForSelectedMonth) {
+      setSelectedMonth(monthOptions[0]);
+    }
+  }, [expenses, monthOptions, selectedMonth, showAllHistory]);
+
   const filteredExpenses = useMemo(() => {
+    if (showAllHistory) {
+      return expenses;
+    }
+
     return expenses.filter((expense) => {
       const month = toMonthValue(expense.expenseDate);
       return month === selectedMonth;
     });
-  }, [expenses, selectedMonth]);
+  }, [expenses, selectedMonth, showAllHistory]);
 
   const monthTotal = useMemo(() => {
     return filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0);
@@ -727,22 +763,52 @@ export default function ExpensesPage() {
           <div className="mb-4 flex items-center justify-between gap-2 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-3 py-3 sm:px-4">
             <button
               type="button"
-              onClick={() => setSelectedMonth((current) => shiftMonth(current, -1))}
+              onClick={() => {
+                setShowAllHistory(false);
+                setSelectedMonth((current) => shiftMonth(current, -1));
+              }}
               className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
             >
               ←
             </button>
 
             <p className="text-center text-base font-semibold text-[#1F4D77] sm:text-lg">
-              {formatMonthLabel(shiftMonth(selectedMonth, -1))} | {formatMonthLabel(selectedMonth)} | {formatMonthLabel(shiftMonth(selectedMonth, 1))}
+              {showAllHistory
+                ? "Tout l'historique"
+                : `${formatMonthLabel(shiftMonth(selectedMonth, -1))} | ${formatMonthLabel(selectedMonth)} | ${formatMonthLabel(shiftMonth(selectedMonth, 1))}`}
             </p>
 
             <button
               type="button"
-              onClick={() => setSelectedMonth((current) => shiftMonth(current, 1))}
+              onClick={() => {
+                setShowAllHistory(false);
+                setSelectedMonth((current) => shiftMonth(current, 1));
+              }}
               className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
             >
               →
+            </button>
+          </div>
+
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAllHistory(true)}
+              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+            >
+              Voir tout l'historique
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAllHistory(false);
+                if (monthOptions.length > 0 && !monthOptions.includes(selectedMonth)) {
+                  setSelectedMonth(monthOptions[0]);
+                }
+              }}
+              className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+            >
+              Revenir au mois
             </button>
           </div>
 
@@ -753,7 +819,9 @@ export default function ExpensesPage() {
           <div className="space-y-3">
             {filteredExpenses.length === 0 ? (
               <p className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] px-4 py-3 text-sm text-[#4A6783]">
-                Aucune dépense pour {formatMonthLabel(selectedMonth)}.
+                {showAllHistory
+                  ? "Aucune dépense enregistrée pour le moment."
+                  : `Aucune dépense pour ${formatMonthLabel(selectedMonth)}.`}
               </p>
             ) : (
               filteredExpenses.map((expense) => (
@@ -861,7 +929,9 @@ export default function ExpensesPage() {
           </div>
 
           <div className="mt-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
-            <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">RÉCAPITULATIF DE {formatMonthLabel(selectedMonth).toUpperCase()}</p>
+            <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">
+              RÉCAPITULATIF {showAllHistory ? "GLOBAL" : `DE ${formatMonthLabel(selectedMonth).toUpperCase()}`}
+            </p>
             <div className="mt-2 grid gap-2 text-sm text-[#2D4B68] sm:grid-cols-3">
               <p>Total des dépenses: <span className="font-semibold text-[#17324D]">{formatCurrency(monthTotal)}$</span></p>
               <p>Total remboursé: <span className="font-semibold text-[#17324D]">{formatCurrency(reimbursedTotal)}$</span></p>
