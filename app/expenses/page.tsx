@@ -402,7 +402,8 @@ export default function ExpensesPage() {
         </header>
 
         <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
-          <h2 className="mb-4 text-xl font-semibold text-[#17324D]">Ajouter une dépense</h2>
+          <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">FORMULAIRE D'AJOUT</p>
+          <h2 className="mb-4 mt-1 text-xl font-semibold text-[#17324D]">Ajouter une dépense</h2>
 
           {formError && (
             <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{formError}</p>
@@ -496,7 +497,8 @@ export default function ExpensesPage() {
         </section>
 
         <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
-          <h2 className="mb-3 text-xl font-semibold text-[#17324D]">Tableau de bord des dépenses</h2>
+          <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">TABLEAU DE BORD DES DÉPENSES</p>
+          <h2 className="mb-3 mt-1 text-xl font-semibold text-[#17324D]">Suivi et remboursements</h2>
 
           <div className="mb-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
             <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">SOLDE ACTUEL</p>
