@@ -762,9 +762,7 @@ export default function CalendarPage() {
       const supabase = getSupabaseBrowserClient();
       const { data, error } = await supabase
         .from("horaire_garde")
-        .select(
-          "schedule_type,custom_schedule,exchange_time,exchange_location,legal_contact_name,case_number,agreement_date,mediator_notes",
-        )
+        .select("*")
         .eq("user_id", user.id)
         .maybeSingle();
 
@@ -1426,6 +1424,10 @@ export default function CalendarPage() {
         .upsert(schedulePayload, { onConflict: "user_id" });
 
       if (saveScheduleError) {
+        if (saveScheduleError.message.toLowerCase().includes("schedule_type") && saveScheduleError.message.toLowerCase().includes("does not exist")) {
+          setScheduleError("Le schéma Supabase est incomplet: colonne 'schedule_type' manquante dans 'horaire_garde'. Exécutez le script supabase/horaire_garde_schema_run.sql.");
+          return;
+        }
         setScheduleError(saveScheduleError.message);
         return;
       }
