@@ -467,10 +467,12 @@ export default function ExpensesPage() {
     try {
       const supabase = getSupabaseBrowserClient();
       let uploadedReceiptUrl: string | null = null;
+      let uploadedReceiptPath: string | null = null;
 
       if (receiptFile) {
         const safeName = receiptFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
         const path = `${user.id}/${Date.now()}-${safeName}`;
+        uploadedReceiptPath = path;
 
         const { error: uploadError } = await supabase.storage.from("receipts").upload(path, receiptFile, {
           upsert: true,
@@ -497,6 +499,7 @@ export default function ExpensesPage() {
           paid_by: paidBy,
           expense_date: expenseDate,
           receipt_url: uploadedReceiptUrl,
+          receipt_path: uploadedReceiptPath,
           reimbursed: false,
           status: "unpaid",
         },
@@ -508,6 +511,7 @@ export default function ExpensesPage() {
           paid_by: paidBy,
           expense_date: expenseDate,
           receipt_file_url: uploadedReceiptUrl,
+          file_path: uploadedReceiptPath,
           reimbursed: false,
           status: "unpaid",
         },
@@ -519,6 +523,7 @@ export default function ExpensesPage() {
           parent: paidBy,
           date: expenseDate,
           justificatif_url: uploadedReceiptUrl,
+          file_path: uploadedReceiptPath,
           status: "Non remboursé",
         },
         {
@@ -947,7 +952,7 @@ export default function ExpensesPage() {
                       >
                         {expense.reimbursed ? "Remboursé" : "Non remboursé"}
                       </span>
-                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "image" && (
+                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) !== "pdf" && (
                         <button
                           type="button"
                           onClick={() => openReceiptViewer(expense)}
@@ -963,7 +968,19 @@ export default function ExpensesPage() {
                         </button>
                       )}
 
-                      {(!expense.receiptUrl || getReceiptType(expense.receiptUrl) !== "image") && (
+                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "pdf" && (
+                        <a
+                          href={expense.receiptUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full border border-[#D0DFEE] bg-white px-3 py-1 text-xs font-semibold text-[#2E6395] transition hover:bg-[#F3F8FD]"
+                          title="Ouvrir le reçu PDF"
+                        >
+                          📄 Reçu PDF
+                        </a>
+                      )}
+
+                      {!expense.receiptUrl && (
                         <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>
                       )}
                     </div>
