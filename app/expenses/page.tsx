@@ -8,6 +8,8 @@ import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type ExpenseCategory = "Médical" | "Scolaire" | "Vêtements" | "Activités" | "Nourriture" | "Autre";
 type PaidBy = "parent1" | "parent2";
+type ParentRole = "parent1" | "parent2";
+type ReviewStatus = "pending" | "approved" | "contested";
 
 type ExpenseItem = {
   id: string;
@@ -39,6 +41,37 @@ type SupabaseExpenseRow = {
   reimbursed_at?: string | null;
   status?: string;
   recu_url?: string;
+};
+
+type SupabaseExpenseReviewRow = {
+  id?: string | number;
+  expense_id?: string | number;
+  depense_id?: string | number;
+  requester_user_id?: string;
+  user_id?: string;
+  reviewer_role?: string;
+  reviewer?: string;
+  status?: string;
+  review_status?: string;
+  contest_reason?: string | null;
+  reason?: string | null;
+  contested_reason?: string | null;
+  reviewed_at?: string | null;
+  decided_at?: string | null;
+  created_at?: string | null;
+  reviewer_user_id?: string | null;
+};
+
+type ExpenseReview = {
+  id: string;
+  expenseId: string;
+  requesterUserId: string | null;
+  reviewerRole: ParentRole;
+  status: ReviewStatus;
+  contestReason: string | null;
+  reviewedAt: string | null;
+  createdAt: string | null;
+  reviewerUserId: string | null;
 };
 
 type ToastState = {
@@ -77,6 +110,14 @@ function normalizePaidBy(value: string | undefined): PaidBy {
   }
 
   return normalized === "parent2" ? "parent2" : "parent1";
+}
+
+function normalizeParentRole(value: string | undefined): ParentRole {
+  return normalizePaidBy(value);
+}
+
+function getOppositeParentRole(role: ParentRole): ParentRole {
+  return role === "parent1" ? "parent2" : "parent1";
 }
 
 function normalizeCategory(value: string | undefined): ExpenseCategory {
@@ -171,10 +212,13 @@ export default function ExpensesPage() {
   const [configError, setConfigError] = useState("");
 
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
+  const [expenseReviews, setExpenseReviews] = useState<ExpenseReview[]>([]);
   const [isLoadingExpenses, setIsLoadingExpenses] = useState(true);
   const [isCreatingExpense, setIsCreatingExpense] = useState(false);
   const [isMarkingReimbursed, setIsMarkingReimbursed] = useState(false);
   const [deletingExpenseId, setDeletingExpenseId] = useState<string | null>(null);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [currentParentRole, setCurrentParentRole] = useState<ParentRole>("parent1");
 
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -190,6 +234,8 @@ export default function ExpensesPage() {
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [receiptViewerExpense, setReceiptViewerExpense] = useState<ExpenseItem | null>(null);
+  const [contestingReview, setContestingReview] = useState<ExpenseReview | null>(null);
+  const [contestReasonInput, setContestReasonInput] = useState("");
 
   const [formError, setFormError] = useState("");
   const [listError, setListError] = useState("");
@@ -265,6 +311,16 @@ export default function ExpensesPage() {
     setReceiptViewerExpense(null);
   };
 
+  const openContestModal = (review: ExpenseReview) => {
+    setContestingReview(review);
+    setContestReasonInput("");
+  };
+
+  const closeContestModal = () => {
+    setContestingReview(null);
+    setContestReasonInput("");
+  };
+
   const refreshExpenses = async (client = getSupabaseBrowserClient()) => {
     let query = client.from("expenses").select("*");
     let { data, error } = await query.order("expense_date", { ascending: false });
@@ -314,6 +370,124 @@ export default function ExpensesPage() {
     setExpenses(mapped);
   };
 
+  const refreshExpenseReviews = async (client = getSupabaseBrowserClient()) => {
+    let { data, error } = await client.from("expense_reviews").select("*").order("created_at", { ascending: false });
+
+    if (error) {
+      const fallback = await client.from("expense_reviews").select("*");
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error) {
+      return;
+    }
+
+    const mapped = (data as SupabaseExpenseReviewRow[])
+      .map((row): ExpenseReview | null => {
+        const expenseId = row.expense_id ?? row.depense_id;
+        if (!row.id || !expenseId) {
+          return null;
+        }
+
+        const rawStatus = (row.status ?? row.review_status ?? "pending").toLowerCase();
+        const status: ReviewStatus = rawStatus === "approved" || rawStatus === "contested" ? rawStatus : "pending";
+
+        return {
+          id: String(row.id),
+          expenseId: String(expenseId),
+          requesterUserId: row.requester_user_id ?? row.user_id ?? null,
+          reviewerRole: normalizeParentRole(row.reviewer_role ?? row.reviewer),
+          status,
+          contestReason: row.contest_reason ?? row.contested_reason ?? row.reason ?? null,
+          reviewedAt: row.reviewed_at ?? row.decided_at ?? null,
+          createdAt: row.created_at ?? null,
+          reviewerUserId: row.reviewer_user_id ?? null,
+        };
+      })
+      .filter((review): review is ExpenseReview => review !== null);
+
+    setExpenseReviews(mapped);
+  };
+
+  const onApproveExpense = async (review: ExpenseReview) => {
+    if (!user) {
+      return;
+    }
+
+    setIsSubmittingReview(true);
+    setListError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const reviewedAt = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("expense_reviews")
+        .update({
+          status: "approved",
+          reviewed_at: reviewedAt,
+          reviewer_user_id: user.id,
+          contest_reason: null,
+        })
+        .eq("id", review.id);
+
+      if (error) {
+        setListError(error.message);
+        return;
+      }
+
+      await refreshExpenseReviews();
+      setToast({ message: "Dépense approuvée.", variant: "success" });
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : "Erreur pendant l'approbation.");
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  };
+
+  const onSubmitContestExpense = async () => {
+    if (!user || !contestingReview) {
+      return;
+    }
+
+    if (contestReasonInput.trim().length === 0) {
+      setListError("La raison de contestation est obligatoire.");
+      return;
+    }
+
+    setIsSubmittingReview(true);
+    setListError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const reviewedAt = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("expense_reviews")
+        .update({
+          status: "contested",
+          reviewed_at: reviewedAt,
+          reviewer_user_id: user.id,
+          contest_reason: contestReasonInput.trim(),
+        })
+        .eq("id", contestingReview.id);
+
+      if (error) {
+        setListError(error.message);
+        return;
+      }
+
+      await refreshExpenseReviews();
+      closeContestModal();
+      setToast({ message: "Dépense contestée.", variant: "success" });
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : "Erreur pendant la contestation.");
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  };
+
   useEffect(() => {
     let supabase;
 
@@ -339,8 +513,18 @@ export default function ExpensesPage() {
       }
 
       setUser(userData.user);
+
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("user_id", userData.user.id)
+        .maybeSingle();
+
+      setCurrentParentRole(normalizeParentRole(profileData?.role));
+
       setCheckingSession(false);
       await refreshExpenses(supabase);
+      await refreshExpenseReviews(supabase);
       setIsLoadingExpenses(false);
     };
 
@@ -441,11 +625,20 @@ export default function ExpensesPage() {
       ];
 
       let lastInsertError: string | null = null;
+      let createdExpenseId: string | null = null;
 
       for (const payload of payloadVariants) {
-        const { error } = await supabase.from("expenses").insert(payload);
+        const { data: inserted, error } = await supabase
+          .from("expenses")
+          .insert(payload)
+          .select("id")
+          .maybeSingle();
+
         if (!error) {
           lastInsertError = null;
+          if (inserted?.id) {
+            createdExpenseId = String(inserted.id);
+          }
           break;
         }
         lastInsertError = error.message;
@@ -456,7 +649,20 @@ export default function ExpensesPage() {
         return;
       }
 
+      if (createdExpenseId) {
+        await supabase.from("expense_reviews").upsert(
+          {
+            expense_id: createdExpenseId,
+            requester_user_id: user.id,
+            reviewer_role: getOppositeParentRole(paidBy),
+            status: "pending",
+          },
+          { onConflict: "expense_id" },
+        );
+      }
+
       await refreshExpenses();
+      await refreshExpenseReviews();
       setAmount("");
       setDescription("");
       setCategory("Médical");
@@ -613,6 +819,20 @@ export default function ExpensesPage() {
 
     return `Parent 1 doit ${formatCurrency(Math.abs(balance))}$ à Parent 2`;
   }, [balance]);
+
+  const reviewByExpenseId = useMemo(() => {
+    const map = new Map<string, ExpenseReview>();
+    for (const review of expenseReviews) {
+      if (!map.has(review.expenseId)) {
+        map.set(review.expenseId, review);
+      }
+    }
+    return map;
+  }, [expenseReviews]);
+
+  const pendingNotifications = useMemo(() => {
+    return expenseReviews.filter((review) => review.status === "pending" && review.reviewerRole === currentParentRole);
+  }, [currentParentRole, expenseReviews]);
 
   if (checkingSession || isLoadingExpenses) {
     return (
@@ -774,6 +994,49 @@ export default function ExpensesPage() {
           <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">TABLEAU DE BORD DES DÉPENSES</p>
           <h2 className="mb-3 mt-1 text-xl font-semibold text-[#17324D]">Suivi et remboursements</h2>
 
+          {pendingNotifications.length > 0 && (
+            <div className="mb-4 rounded-2xl border border-[#D0DFEE] bg-[#F6FAFF] p-3">
+              <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">NOTIFICATIONS</p>
+              <div className="mt-2 space-y-2">
+                {pendingNotifications.map((review) => {
+                  const linkedExpense = expenses.find((expense) => expense.id === review.expenseId);
+                  if (!linkedExpense) {
+                    return null;
+                  }
+
+                  return (
+                    <div key={review.id} className="rounded-xl border border-[#D7E6F4] bg-white p-3">
+                      <p className="text-sm font-semibold text-[#17324D]">
+                        Nouvelle dépense à valider: {linkedExpense.description} ({formatCurrency(linkedExpense.amount)}$)
+                      </p>
+                      <p className="mt-1 text-xs text-[#5E7A95]">
+                        Soumise le {new Date(review.createdAt ?? linkedExpense.expenseDate).toLocaleString("fr-CA")}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onApproveExpense(review)}
+                          disabled={isSubmittingReview}
+                          className="rounded-xl bg-[#50C878] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          ✅ Approuver
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openContestModal(review)}
+                          disabled={isSubmittingReview}
+                          className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm font-semibold text-[#8D3E45] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          ❌ Contester
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="mb-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
             <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">HISTORIQUE</p>
             <p className="mt-1 text-lg font-semibold text-[#1F4D77]">Toutes les dépenses</p>
@@ -823,6 +1086,30 @@ export default function ExpensesPage() {
             ) : (
               filteredExpenses.map((expense) => (
                 <article key={expense.id} className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-4">
+                  {(() => {
+                    const review = reviewByExpenseId.get(expense.id);
+                    const reviewStatus = review?.status ?? "pending";
+                    const statusClass =
+                      reviewStatus === "approved"
+                        ? "border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]"
+                        : reviewStatus === "contested"
+                          ? "border-[#E3B4B8] bg-[#FFF4F5] text-[#8D3E45]"
+                          : "border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]";
+
+                    return (
+                      <div className="mb-3 space-y-1">
+                        <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusClass}`}>
+                          {reviewStatus === "approved" ? "✅ Approuvée" : reviewStatus === "contested" ? "❌ Contestée" : "🟡 En attente"}
+                        </span>
+                        <p className="text-xs text-[#5E7A95]">
+                          Demande créée le {new Date(review?.createdAt ?? expense.expenseDate).toLocaleString("fr-CA")}
+                          {review?.reviewedAt ? ` · Décision le ${new Date(review.reviewedAt).toLocaleString("fr-CA")}` : ""}
+                        </p>
+                        {review?.contestReason && <p className="text-xs font-medium text-[#8D3E45]">Raison: {review.contestReason}</p>}
+                      </div>
+                    );
+                  })()}
+
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="text-lg font-semibold text-[#17324D]">{formatCurrency(expense.amount)}$</p>
@@ -950,6 +1237,39 @@ export default function ExpensesPage() {
             >
               Fermer
             </button>
+          </div>
+        </div>
+      )}
+
+      {contestingReview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-white/70 bg-white p-5 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <h3 className="text-lg font-semibold text-[#17324D]">Contester la dépense</h3>
+            <p className="mt-1 text-sm text-[#5E7A95]">Explique la raison de contestation (tracée et datée).</p>
+            <textarea
+              value={contestReasonInput}
+              onChange={(event) => setContestReasonInput(event.target.value)}
+              rows={4}
+              className="mt-3 w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-sm text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+              placeholder="Ex: Montant contesté, reçu illisible, dépense hors accord..."
+            />
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={onSubmitContestExpense}
+                disabled={isSubmittingReview}
+                className="w-full rounded-xl bg-[#8D3E45] px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                Enregistrer la contestation
+              </button>
+              <button
+                type="button"
+                onClick={closeContestModal}
+                className="w-full rounded-xl border border-[#D0DFEE] bg-white px-4 py-2.5 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                Annuler
+              </button>
+            </div>
           </div>
         </div>
       )}
