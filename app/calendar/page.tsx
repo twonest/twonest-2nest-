@@ -332,6 +332,16 @@ function horaireSchemaMigrationMessage(): string {
   return "Le schéma Supabase de 'horaire_garde' est incomplet (colonne manquante, ex: user_id ou agreement_date). Exécutez le script supabase/horaire_garde_schema_run.sql puis rechargez la page.";
 }
 
+function isEventsMissingColumnError(message: string, column: string): boolean {
+  const normalized = message.toLowerCase();
+  const missingColumnHint =
+    normalized.includes("column") && normalized.includes("does not exist")
+      ? true
+      : normalized.includes("could not find") && normalized.includes("schema cache");
+
+  return normalized.includes("events") && normalized.includes(column.toLowerCase()) && missingColumnHint;
+}
+
 function toUtcDayMs(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -1480,8 +1490,21 @@ export default function CalendarPage() {
           .gte("start_date", startIso)
           .lt("start_date", endIso);
 
-        existingEventsData = fallbackByStartDate.data ?? [];
-        existingEventsError = fallbackByStartDate.error;
+        if (fallbackByStartDate.error) {
+          const fallbackByStart = await supabase
+            .from("events")
+            .select("id")
+            .eq("user_id", user.id)
+            .eq("type", "Garde")
+            .eq("title", "Horaire de garde (auto)")
+            .gte("start", startIso)
+            .lt("start", endIso);
+
+          existingEventsData = fallbackByStart.data ?? [];
+          existingEventsError = fallbackByStart.error;
+        } else {
+          existingEventsData = fallbackByStartDate.data ?? [];
+        }
       } else {
         existingEventsData = existingByStartAt.data ?? [];
       }
@@ -1537,13 +1560,13 @@ export default function CalendarPage() {
       }
 
       let insertedRows:
-        | Array<{ id?: string | number; start_at?: string; start_date?: string; parent?: string; parent_role?: string }>
+        | Array<{ id?: string | number; start_at?: string; start_date?: string; start?: string; parent?: string; parent_role?: string }>
         | null = null;
 
       const inserted = await supabase
         .from("events")
         .insert(generatedEvents)
-        .select("id,start_at,start_date,parent,parent_role");
+        .select("*");
 
       if (inserted.error) {
         const fallbackInserted = await supabase
@@ -1558,14 +1581,40 @@ export default function CalendarPage() {
               end_date: row.end_at,
             })),
           )
-          .select("id,start_at,start_date,parent,parent_role");
+          .select("*");
 
         if (fallbackInserted.error) {
-          setScheduleError(fallbackInserted.error.message);
-          return;
-        }
+          if (
+            isEventsMissingColumnError(fallbackInserted.error.message, "start_date") ||
+            isEventsMissingColumnError(fallbackInserted.error.message, "end_date")
+          ) {
+            const fallbackLegacyInserted = await supabase
+              .from("events")
+              .insert(
+                generatedEvents.map((row) => ({
+                  title: row.title,
+                  type: row.type,
+                  user_id: row.user_id,
+                  parent: row.parent,
+                  start: row.start_at,
+                  end: row.end_at,
+                })),
+              )
+              .select("*");
 
-        insertedRows = fallbackInserted.data ?? [];
+            if (fallbackLegacyInserted.error) {
+              setScheduleError(fallbackLegacyInserted.error.message);
+              return;
+            }
+
+            insertedRows = fallbackLegacyInserted.data ?? [];
+          } else {
+            setScheduleError(fallbackInserted.error.message);
+            return;
+          }
+        } else {
+          insertedRows = fallbackInserted.data ?? [];
+        }
       } else {
         insertedRows = inserted.data ?? [];
       }
@@ -1573,7 +1622,7 @@ export default function CalendarPage() {
       const journalRows = (insertedRows ?? [])
         .map((row) => {
           const id = row.id ? String(row.id) : "";
-          const startValue = row.start_at ?? row.start_date;
+          const startValue = row.start_at ?? row.start_date ?? row.start;
           if (!id || !startValue) {
             return null;
           }
