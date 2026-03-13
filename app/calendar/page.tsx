@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import jsPDF from "jspdf";
 import moment from "moment";
 import "moment/locale/fr";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Calendar, momentLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
@@ -119,9 +120,10 @@ type ImportedSchoolDate = {
   type: SpecialDayType;
 };
 
-type SchoolCalendarExtractResponse = {
-  dates?: ImportedSchoolDate[];
-  error?: string;
+type KeywordRule = {
+  keyword: string;
+  description: string;
+  type: SpecialDayType;
 };
 
 type DecisionType = "accept" | "refuse";
@@ -147,6 +149,170 @@ const SPECIAL_DAY_OPTIONS: Array<{ value: SpecialDayType; label: string; emoji: 
   { value: "scolaire", label: "Événement scolaire", emoji: "🔵", color: "#4A90D9" },
 ];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
+const SchoolPdfUploadButton = dynamic(() => import("@/components/SchoolPdfUploadButton"), { ssr: false });
+const SCHOOL_KEYWORD_RULES: KeywordRule[] = [
+  { keyword: "congé pédagogique", description: "Congé pédagogique", type: "pedagogique" },
+  { keyword: "journée pédagogique", description: "Journée pédagogique", type: "pedagogique" },
+  { keyword: "relâche", description: "Relâche", type: "vacances" },
+  { keyword: "vacances", description: "Vacances", type: "vacances" },
+  { keyword: "férié", description: "Jour férié", type: "ferie" },
+  { keyword: "ferie", description: "Jour férié", type: "ferie" },
+  { keyword: "rentrée", description: "Rentrée", type: "scolaire" },
+  { keyword: "examens", description: "Examens", type: "scolaire" },
+  { keyword: "remise de bulletins", description: "Remise de bulletins", type: "scolaire" },
+];
+const SCHOOL_MONTHS_FR: Record<string, number> = {
+  janvier: 1,
+  fevrier: 2,
+  février: 2,
+  mars: 3,
+  avril: 4,
+  mai: 5,
+  juin: 6,
+  juillet: 7,
+  aout: 8,
+  août: 8,
+  septembre: 9,
+  octobre: 10,
+  novembre: 11,
+  decembre: 12,
+  décembre: 12,
+};
+
+function normalizeSchoolText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function toIsoSchoolDate(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) {
+    return null;
+  }
+
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function extractDatesFromSchoolLine(line: string): string[] {
+  const found = new Set<string>();
+
+  const slashPattern = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/g;
+  for (const match of line.matchAll(slashPattern)) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const rawYear = Number(match[3]);
+    const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+    const iso = toIsoSchoolDate(year, month, day);
+    if (iso) {
+      found.add(iso);
+    }
+  }
+
+  const isoPattern = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+  for (const match of line.matchAll(isoPattern)) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const iso = toIsoSchoolDate(year, month, day);
+    if (iso) {
+      found.add(iso);
+    }
+  }
+
+  const monthPattern = /\b(\d{1,2})\s+(janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre)\s+(\d{4})\b/gi;
+  for (const match of line.matchAll(monthPattern)) {
+    const day = Number(match[1]);
+    const monthLabel = normalizeSchoolText(match[2]);
+    const year = Number(match[3]);
+    const month = SCHOOL_MONTHS_FR[monthLabel];
+    if (!month) {
+      continue;
+    }
+
+    const iso = toIsoSchoolDate(year, month, day);
+    if (iso) {
+      found.add(iso);
+    }
+  }
+
+  return Array.from(found.values());
+}
+
+function detectSchoolDatesFromText(text: string): ImportedSchoolDate[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const detected: ImportedSchoolDate[] = [];
+  const dedupe = new Set<string>();
+
+  for (const lineRaw of lines) {
+    const normalized = normalizeSchoolText(lineRaw);
+    const rule = SCHOOL_KEYWORD_RULES.find((item) => normalized.includes(item.keyword));
+    if (!rule) {
+      continue;
+    }
+
+    const dates = extractDatesFromSchoolLine(lineRaw);
+    if (dates.length === 0) {
+      continue;
+    }
+
+    for (const date of dates) {
+      const id = `${date}|${rule.type}|${rule.description}`;
+      if (dedupe.has(id)) {
+        continue;
+      }
+
+      dedupe.add(id);
+      detected.push({
+        id,
+        date,
+        description: rule.description,
+        type: rule.type,
+      });
+    }
+  }
+
+  return detected.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function extractTextFromPdfInBrowser(file: File): Promise<string> {
+  const pdfjs = await import("pdfjs-dist");
+  const workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+
+  const fileData = new Uint8Array(await file.arrayBuffer());
+  const loadingTask = pdfjs.getDocument({ data: fileData });
+  const document = await loadingTask.promise;
+
+  let combinedText = "";
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items
+      .map((item) => {
+        if (typeof item !== "object" || item === null || !("str" in item)) {
+          return "";
+        }
+        const value = (item as { str?: unknown }).str;
+        return typeof value === "string" ? value : "";
+      })
+      .join(" ");
+
+    combinedText += `${pageText}\n`;
+  }
+
+  return combinedText;
+}
 
 function formatForDateTimeLocal(date: Date): string {
   const offset = date.getTimezoneOffset();
@@ -1378,10 +1544,7 @@ export default function CalendarPage() {
     setSchoolPdfName("");
   };
 
-  const onUploadSchoolCalendarPdf = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-
+  const onUploadSchoolCalendarPdf = async (file: File) => {
     if (!file || !user) {
       return;
     }
@@ -1408,21 +1571,8 @@ export default function CalendarPage() {
         return;
       }
 
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetch("/api/calendar/extract-school-calendar", {
-        method: "POST",
-        body: formData,
-      });
-
-      const payload = (await response.json()) as SchoolCalendarExtractResponse;
-      if (!response.ok) {
-        setSchoolImportError(payload.error ?? "Impossible d'analyser le PDF.");
-        return;
-      }
-
-      const detected = Array.isArray(payload.dates) ? payload.dates : [];
+      const extractedText = await extractTextFromPdfInBrowser(file);
+      const detected = detectSchoolDatesFromText(extractedText);
       if (detected.length === 0) {
         setSchoolImportError("Aucune date scolaire détectée dans ce PDF.");
         return;
@@ -2798,16 +2948,10 @@ export default function CalendarPage() {
             )}
 
             <div className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] p-4">
-              <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-[#4A90D9] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105">
-                📎 Déposer le calendrier scolaire (PDF)
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  onChange={onUploadSchoolCalendarPdf}
-                  disabled={isUploadingSchoolPdf || isImportingSchoolDates}
-                  className="hidden"
-                />
-              </label>
+              <SchoolPdfUploadButton
+                onFileSelected={onUploadSchoolCalendarPdf}
+                disabled={isUploadingSchoolPdf || isImportingSchoolDates}
+              />
               {isUploadingSchoolPdf && <p className="mt-3 text-sm text-[#4A6783]">Analyse du PDF en cours...</p>}
               {schoolPdfName && !isUploadingSchoolPdf && (
                 <p className="mt-3 text-sm text-[#4A6783]">Fichier analysé: {schoolPdfName}</p>
