@@ -38,14 +38,7 @@ type SupabaseExpenseRow = {
   reimbursed?: boolean;
   reimbursed_at?: string | null;
   status?: string;
-  receipt_url?: string;
-  receipt_file_url?: string;
-  receipt_path?: string;
-  receipt?: string;
-  justificatif_url?: string;
-  file_url?: string;
-  file_path?: string;
-  attachment_url?: string;
+  recu_url?: string;
 };
 
 type ToastState = {
@@ -158,119 +151,6 @@ function getReceiptType(url: string | null): "image" | "pdf" | "other" {
   }
 
   return "other";
-}
-
-function isReceiptFromBucket(url: string | null): boolean {
-  if (!url) {
-    return false;
-  }
-
-  return (
-    url.includes("/storage/v1/object/public/receipts/") ||
-    url.includes("/storage/v1/object/sign/receipts/") ||
-    url.includes("/storage/v1/object/authenticated/receipts/")
-  );
-}
-
-function extractReceiptPath(rawReceiptUrl: string | null): string | null {
-  if (!rawReceiptUrl) {
-    return null;
-  }
-
-  const trimmed = rawReceiptUrl.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const storageMatch = trimmed.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/receipts\/([^?]+)/i);
-  if (storageMatch?.[1]) {
-    return decodeURIComponent(storageMatch[1]);
-  }
-
-  let storagePath = trimmed.replace(/^\/+/, "");
-
-  if (storagePath.startsWith("public/receipts/")) {
-    storagePath = storagePath.slice("public/receipts/".length);
-  } else if (storagePath.startsWith("receipts/")) {
-    storagePath = storagePath.slice("receipts/".length);
-  }
-
-  if (!storagePath) {
-    return null;
-  }
-
-  return decodeURIComponent(storagePath);
-}
-
-async function normalizeReceiptUrl(
-  rawReceiptUrl: string | null,
-  client: ReturnType<typeof getSupabaseBrowserClient>,
-): Promise<string | null> {
-  const storagePath = extractReceiptPath(rawReceiptUrl);
-
-  if (!storagePath) {
-    return null;
-  }
-
-  const { data: signedData, error: signedError } = await client.storage
-    .from("receipts")
-    .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
-
-  if (!signedError && signedData?.signedUrl) {
-    let absoluteSignedUrl = signedData.signedUrl;
-
-    if (!absoluteSignedUrl.startsWith("http")) {
-      const configuredBaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-      const rawAbsoluteOrigin = rawReceiptUrl?.startsWith("http") ? new URL(rawReceiptUrl).origin : "";
-      const candidateBaseUrl = configuredBaseUrl || rawAbsoluteOrigin;
-
-      if (candidateBaseUrl) {
-        absoluteSignedUrl = `${candidateBaseUrl}${absoluteSignedUrl}`;
-      }
-    }
-
-    if (absoluteSignedUrl.startsWith("http") && isReceiptFromBucket(absoluteSignedUrl)) {
-      return absoluteSignedUrl;
-    }
-  }
-
-  const {
-    data: { publicUrl },
-  } = client.storage.from("receipts").getPublicUrl(storagePath);
-
-  return isReceiptFromBucket(publicUrl) ? publicUrl : null;
-}
-
-function findReceiptCandidateValue(row: SupabaseExpenseRow): string | null {
-  const explicitCandidates = [
-    row.receipt_url,
-    row.receipt_file_url,
-    row.receipt_path,
-    row.receipt,
-    row.justificatif_url,
-    row.file_url,
-    row.file_path,
-    row.attachment_url,
-  ];
-
-  for (const candidate of explicitCandidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate;
-    }
-  }
-
-  const genericEntries = Object.entries(row as Record<string, unknown>);
-  for (const [key, value] of genericEntries) {
-    if (typeof value !== "string" || value.trim().length === 0) {
-      continue;
-    }
-
-    if (/(receipt|recu|justif|facture|preuve|piece|attachment|file|path|url)/i.test(key)) {
-      return value;
-    }
-  }
-
-  return null;
 }
 
 function toDateOnlyValue(dateInput: string): string | null {
@@ -400,8 +280,7 @@ export default function ExpensesPage() {
       return;
     }
 
-    const mappedEntries = await Promise.all(
-      (data as SupabaseExpenseRow[]).map(async (row): Promise<ExpenseItem | null> => {
+    const mappedEntries = (data as SupabaseExpenseRow[]).map((row): ExpenseItem | null => {
         const parsedAmount = parseAmount(row.amount ?? row.montant);
         const rawDate = row.expense_date ?? row.date ?? row.spent_at ?? row.created_at;
 
@@ -416,8 +295,7 @@ export default function ExpensesPage() {
           statusText === "remboursé" ||
           statusText === "reimbursed";
 
-        const rawReceiptUrl = findReceiptCandidateValue(row);
-        const normalizedReceiptUrl = await normalizeReceiptUrl(rawReceiptUrl, client);
+        const normalizedReceiptUrl = row.recu_url ?? null;
 
         return {
           id: String(row.id),
@@ -429,8 +307,7 @@ export default function ExpensesPage() {
           reimbursed,
           receiptUrl: normalizedReceiptUrl,
         };
-      }),
-    );
+      });
 
     const mapped = mappedEntries.filter((expense): expense is ExpenseItem => expense !== null);
 
@@ -498,12 +375,10 @@ export default function ExpensesPage() {
     try {
       const supabase = getSupabaseBrowserClient();
       let uploadedReceiptUrl: string | null = null;
-      let uploadedReceiptPath: string | null = null;
 
       if (receiptFile) {
         const safeName = receiptFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
         const path = `${user.id}/${Date.now()}-${safeName}`;
-        uploadedReceiptPath = path;
 
         const { error: uploadError } = await supabase.storage.from("receipts").upload(path, receiptFile, {
           upsert: true,
@@ -529,8 +404,7 @@ export default function ExpensesPage() {
           category,
           paid_by: paidBy,
           expense_date: expenseDate,
-          receipt_url: uploadedReceiptUrl,
-          receipt_path: uploadedReceiptPath,
+          recu_url: uploadedReceiptUrl,
           reimbursed: false,
           status: "unpaid",
         },
@@ -541,8 +415,7 @@ export default function ExpensesPage() {
           category,
           paid_by: paidBy,
           expense_date: expenseDate,
-          receipt_file_url: uploadedReceiptUrl,
-          file_path: uploadedReceiptPath,
+          recu_url: uploadedReceiptUrl,
           reimbursed: false,
           status: "unpaid",
         },
@@ -553,8 +426,7 @@ export default function ExpensesPage() {
           categorie: category,
           parent: paidBy,
           date: expenseDate,
-          justificatif_url: uploadedReceiptUrl,
-          file_path: uploadedReceiptPath,
+          recu_url: uploadedReceiptUrl,
           status: "Non remboursé",
         },
         {
