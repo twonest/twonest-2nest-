@@ -115,12 +115,15 @@ type SupabaseSwapRow = {
   user_id?: string;
   owner_id?: string;
   original_date?: string;
+  date_originale?: string;
   proposed_date?: string;
+  date_proposee?: string;
   current_date?: string;
   new_date?: string;
   reason?: string;
   request_reason?: string;
   status?: string;
+  statut?: string;
   response_reason?: string;
   refusal_reason?: string;
   created_at?: string;
@@ -352,6 +355,16 @@ function isJournalMissingColumnError(message: string, column: string): boolean {
   return normalized.includes("journal_garde") && normalized.includes(column.toLowerCase()) && missingColumnHint;
 }
 
+function isSwapMissingColumnError(message: string, column: string): boolean {
+  const normalized = message.toLowerCase();
+  const missingColumnHint =
+    normalized.includes("column") && normalized.includes("does not exist")
+      ? true
+      : normalized.includes("could not find") && normalized.includes("schema cache");
+
+  return normalized.includes("swap_requests") && normalized.includes(column.toLowerCase()) && missingColumnHint;
+}
+
 function toUtcDayMs(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -456,6 +469,7 @@ export default function CalendarPage() {
   const [legalCaseNumber, setLegalCaseNumber] = useState("");
   const [agreementDate, setAgreementDate] = useState(() => formatForDateInput(new Date()));
   const [mediatorNotes, setMediatorNotes] = useState("");
+  const [guardDateMenu, setGuardDateMenu] = useState<{ dateKey: string; eventId: string; x: number; y: number } | null>(null);
 
   const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
 
@@ -673,14 +687,22 @@ export default function CalendarPage() {
 
     const mapped = (data as SupabaseSwapRow[])
       .map((row): SwapRequest | null => {
-        const rowOriginalDate = row.original_date ?? row.current_date;
-        const rowProposedDate = row.proposed_date ?? row.new_date;
+        const rowOriginalDate = row.original_date ?? row.date_originale ?? row.current_date;
+        const rowProposedDate = row.proposed_date ?? row.date_proposee ?? row.new_date;
 
         if (!row.id || !rowOriginalDate || !rowProposedDate) {
           return null;
         }
 
-        const statusCandidate = row.status ?? "pending";
+        const statusCandidateRaw = row.status ?? row.statut ?? "pending";
+        const statusCandidate =
+          statusCandidateRaw === "en_attente"
+            ? "pending"
+            : statusCandidateRaw === "acceptee"
+              ? "accepted"
+              : statusCandidateRaw === "refusee"
+                ? "refused"
+                : statusCandidateRaw;
         const status: SwapStatus =
           statusCandidate === "accepted" || statusCandidate === "refused" ? statusCandidate : "pending";
 
@@ -796,6 +818,19 @@ export default function CalendarPage() {
   const closeSwapForm = () => {
     setSwapFormOpen(false);
     setSwapError("");
+  };
+
+  const openSwapFormForDate = (dateKey: string) => {
+    setSwapError("");
+    setOriginalDate(dateKey);
+
+    const baseDate = new Date(`${dateKey}T00:00:00`);
+    const nextDate = Number.isNaN(baseDate.getTime())
+      ? new Date(Date.now() + 24 * 60 * 60 * 1000)
+      : new Date(baseDate.getTime() + 24 * 60 * 60 * 1000);
+
+    setProposedDate(formatForDateInput(nextDate));
+    setSwapFormOpen(true);
   };
 
   const openScheduleForm = async () => {
@@ -1088,24 +1123,37 @@ export default function CalendarPage() {
         requester_user_id: user.id,
         original_date: originalDate,
         proposed_date: proposedDate,
+        date_originale: originalDate,
+        date_proposee: proposedDate,
         reason: swapReason.trim(),
         status: "pending",
+        statut: "en_attente",
       };
 
       const { error } = await supabase.from("swap_requests").insert(payload);
 
       if (error) {
-        const { error: fallbackError } = await supabase.from("swap_requests").insert({
-          user_id: user.id,
-          current_date: originalDate,
-          new_date: proposedDate,
+        const fallbackInsert = await supabase.from("swap_requests").insert({
+          requester_user_id: user.id,
+          original_date: originalDate,
+          proposed_date: proposedDate,
           reason: swapReason.trim(),
           status: "pending",
         });
 
-        if (fallbackError) {
-          setSwapError(fallbackError.message);
-          return;
+        if (fallbackInsert.error) {
+          const legacyInsert = await supabase.from("swap_requests").insert({
+            user_id: user.id,
+            current_date: originalDate,
+            new_date: proposedDate,
+            reason: swapReason.trim(),
+            status: "pending",
+          });
+
+          if (legacyInsert.error) {
+            setSwapError(legacyInsert.error.message);
+            return;
+          }
         }
       }
 
@@ -1263,19 +1311,37 @@ export default function CalendarPage() {
         .from("swap_requests")
         .update({
           status: newStatus,
+          statut: decisionType === "accept" ? "acceptee" : "refusee",
           responded_at: new Date().toISOString(),
           response_reason: decisionType === "refuse" ? decisionReason.trim() : null,
         })
         .eq("id", decisionRequestId);
 
       if (error) {
-        const { error: fallbackError } = await supabase
-          .from("swap_requests")
-          .update({
-            status: newStatus,
-            refusal_reason: decisionType === "refuse" ? decisionReason.trim() : null,
-          })
-          .eq("id", decisionRequestId);
+        let fallbackError: { message: string } | null = error;
+
+        if (isSwapMissingColumnError(error.message, "statut")) {
+          const fallbackWithoutStatut = await supabase
+            .from("swap_requests")
+            .update({
+              status: newStatus,
+              responded_at: new Date().toISOString(),
+              response_reason: decisionType === "refuse" ? decisionReason.trim() : null,
+            })
+            .eq("id", decisionRequestId);
+          fallbackError = fallbackWithoutStatut.error;
+        }
+
+        if (fallbackError) {
+          const legacyFallback = await supabase
+            .from("swap_requests")
+            .update({
+              status: newStatus,
+              refusal_reason: decisionType === "refuse" ? decisionReason.trim() : null,
+            })
+            .eq("id", decisionRequestId);
+          fallbackError = legacyFallback.error;
+        }
 
         if (fallbackError) {
           setDecisionError(fallbackError.message);
@@ -1405,6 +1471,22 @@ export default function CalendarPage() {
   }, [journalYearEntries]);
 
   const maxMonthCount = Math.max(monthCounts.parent1, monthCounts.parent2, 1);
+
+  const getGuardEventForDate = (date: Date): CalendarEvent | null => {
+    const selectedDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    const found = events.find((eventItem) => {
+      if (eventItem.type !== "Garde") {
+        return false;
+      }
+
+      const eventStart = new Date(eventItem.start.getFullYear(), eventItem.start.getMonth(), eventItem.start.getDate());
+      const eventEnd = new Date(eventItem.end.getFullYear(), eventItem.end.getMonth(), eventItem.end.getDate());
+      return selectedDay >= eventStart && selectedDay <= eventEnd;
+    });
+
+    return found ?? null;
+  };
 
   const onCreateSpecialDay = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -2066,6 +2148,7 @@ export default function CalendarPage() {
             <Calendar
               localizer={localizer}
               events={calendarDisplayEvents}
+              selectable
               startAccessor="start"
               endAccessor="end"
               allDayAccessor="allDay"
@@ -2081,10 +2164,36 @@ export default function CalendarPage() {
                   : `${event.title} · ${event.type}`
               }
               onSelectEvent={(event: CalendarDisplayEvent) => {
+                setGuardDateMenu(null);
                 if (event.kind === "special") {
                   return;
                 }
                 openEditForm(event);
+              }}
+              onSelectSlot={(slotInfo) => {
+                const selectedDate = slotInfo.start;
+
+                if (!(selectedDate instanceof Date) || Number.isNaN(selectedDate.getTime())) {
+                  setGuardDateMenu(null);
+                  return;
+                }
+
+                const guardEvent = getGuardEventForDate(selectedDate);
+                if (!guardEvent) {
+                  setGuardDateMenu(null);
+                  return;
+                }
+
+                const box = (slotInfo as { box?: { x?: number; y?: number; left?: number; top?: number } }).box;
+                const x = typeof box?.x === "number" ? box.x : typeof box?.left === "number" ? box.left : 24;
+                const y = typeof box?.y === "number" ? box.y : typeof box?.top === "number" ? box.top : 24;
+
+                setGuardDateMenu({
+                  dateKey: toDateOnlyKey(selectedDate),
+                  eventId: guardEvent.id,
+                  x,
+                  y,
+                });
               }}
               eventPropGetter={(event) => {
                 if (event.kind === "special") {
@@ -2203,6 +2312,44 @@ export default function CalendarPage() {
           </div>
         </section>
       </main>
+
+      {guardDateMenu && (
+        <div className="fixed inset-0 z-[55]" onClick={() => setGuardDateMenu(null)}>
+          <div
+            className="absolute w-[280px] max-w-[calc(100vw-24px)] rounded-xl border border-[#D7E6F4] bg-white p-3 shadow-[0_14px_30px_rgba(38,78,120,0.24)]"
+            style={{ left: guardDateMenu.x, top: guardDateMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="text-xs font-semibold tracking-[0.14em] text-[#5F81A3]">GARDE · {formatDateLabel(guardDateMenu.dateKey)}</p>
+            <div className="mt-2 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const eventToView = events.find((item) => item.id === guardDateMenu.eventId);
+                  setGuardDateMenu(null);
+                  if (eventToView) {
+                    openEditForm(eventToView);
+                  }
+                }}
+                className="rounded-lg border border-[#D0DFEE] bg-white px-3 py-2 text-left text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                📋 Voir l'événement
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const selectedDate = guardDateMenu.dateKey;
+                  setGuardDateMenu(null);
+                  openSwapFormForDate(selectedDate);
+                }}
+                className="rounded-lg border border-[#D0DFEE] bg-white px-3 py-2 text-left text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                🔄 Demander un échange pour ce jour
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {formOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
