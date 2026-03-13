@@ -4,6 +4,20 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import jsPDF from "jspdf";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type ExpenseCategory = "Médical" | "Scolaire" | "Vêtements" | "Activités" | "Nourriture" | "Autre";
@@ -96,8 +110,14 @@ type ToastState = {
   variant: "success" | "error";
 };
 
+type ParentNames = {
+  parent1: string;
+  parent2: string;
+};
+
 const CATEGORIES: ExpenseCategory[] = ["Médical", "Scolaire", "Vêtements", "Activités", "Nourriture", "Autre"];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
+const MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Aoû", "Sep", "Oct", "Nov", "Déc"];
 const DEFAULT_SHARE_RULES: Record<ExpenseCategory, number> = {
   Médical: 50,
   Scolaire: 50,
@@ -105,6 +125,14 @@ const DEFAULT_SHARE_RULES: Record<ExpenseCategory, number> = {
   Activités: 50,
   Nourriture: 50,
   Autre: 50,
+};
+const CATEGORY_COLORS: Record<ExpenseCategory, string> = {
+  Médical: "#4A90D9",
+  Scolaire: "#7AA8D2",
+  Vêtements: "#8A7FD1",
+  Activités: "#50C878",
+  Nourriture: "#F3B562",
+  Autre: "#A7B8C9",
 };
 
 function parseAmount(value: number | string | undefined): number | null {
@@ -163,6 +191,19 @@ function formatCurrency(amount: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function formatTooltipCurrencyValue(value: unknown): string {
+  if (typeof value === "number") {
+    return `${formatCurrency(value)}$`;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(",", "."));
+    return `${formatCurrency(Number.isFinite(parsed) ? parsed : 0)}$`;
+  }
+
+  return `${formatCurrency(0)}$`;
 }
 
 function toMonthValue(dateInput: string): string {
@@ -250,6 +291,28 @@ function clampPercentage(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function getExpenseYear(dateInput: string): number | null {
+  const date = new Date(dateInput);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.getFullYear();
+}
+
+function extractProfileDisplayName(profile: Record<string, unknown>): string | null {
+  const candidateKeys = ["full_name", "display_name", "name", "nom", "prenom_nom"];
+
+  for (const key of candidateKeys) {
+    const value = profile[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
 export default function ExpensesPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -281,6 +344,8 @@ export default function ExpensesPage() {
   const [receiptViewerExpense, setReceiptViewerExpense] = useState<ExpenseItem | null>(null);
   const [contestingReview, setContestingReview] = useState<ExpenseReview | null>(null);
   const [contestReasonInput, setContestReasonInput] = useState("");
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [parentNames, setParentNames] = useState<ParentNames>({ parent1: "Parent 1", parent2: "Parent 2" });
   const [shareRules, setShareRules] = useState<Record<ExpenseCategory, number>>(DEFAULT_SHARE_RULES);
   const [isShareSettingsOpen, setIsShareSettingsOpen] = useState(false);
   const [isSavingShareRules, setIsSavingShareRules] = useState(false);
@@ -652,6 +717,28 @@ export default function ExpensesPage() {
 
       setCurrentParentRole(normalizeParentRole(profileData?.role));
 
+      const { data: profilesData } = await supabase.from("profiles").select("*");
+      if (Array.isArray(profilesData)) {
+        let nextParent1 = "Parent 1";
+        let nextParent2 = "Parent 2";
+
+        for (const rawProfile of profilesData as Record<string, unknown>[]) {
+          const role = normalizeParentRole(typeof rawProfile.role === "string" ? rawProfile.role : undefined);
+          const displayName = extractProfileDisplayName(rawProfile);
+          if (!displayName) {
+            continue;
+          }
+
+          if (role === "parent1") {
+            nextParent1 = displayName;
+          } else {
+            nextParent2 = displayName;
+          }
+        }
+
+        setParentNames({ parent1: nextParent1, parent2: nextParent2 });
+      }
+
       setCheckingSession(false);
       await refreshShareRules(supabase);
       await refreshExpenses(supabase);
@@ -987,6 +1074,160 @@ export default function ExpensesPage() {
     return expenseReviews.filter((review) => review.status === "pending" && review.reviewerRole === currentParentRole);
   }, [currentParentRole, expenseReviews]);
 
+  const annualExpenses = useMemo(() => {
+    return expenses.filter((expense) => getExpenseYear(expense.expenseDate) === selectedYear);
+  }, [expenses, selectedYear]);
+
+  const annualTotals = useMemo(() => {
+    let paidByParent1 = 0;
+    let paidByParent2 = 0;
+    let balanceNet = 0;
+
+    for (const expense of annualExpenses) {
+      if (expense.paidBy === "parent1") {
+        paidByParent1 += expense.amount;
+      } else {
+        paidByParent2 += expense.amount;
+      }
+
+      if (!expense.reimbursed) {
+        if (expense.paidBy === "parent1") {
+          balanceNet += expense.parent2ShareAmount ?? expense.amount / 2;
+        } else {
+          balanceNet -= expense.parent1ShareAmount ?? expense.amount / 2;
+        }
+      }
+    }
+
+    return {
+      total: annualExpenses.reduce((sum, expense) => sum + expense.amount, 0),
+      paidByParent1,
+      paidByParent2,
+      balanceNet,
+    };
+  }, [annualExpenses]);
+
+  const annualBarData = useMemo(() => {
+    const data = MONTH_LABELS.map((label) => ({
+      month: label,
+      parent1: 0,
+      parent2: 0,
+    }));
+
+    for (const expense of annualExpenses) {
+      const date = new Date(expense.expenseDate);
+      if (Number.isNaN(date.getTime())) {
+        continue;
+      }
+
+      const monthIndex = date.getMonth();
+      if (!data[monthIndex]) {
+        continue;
+      }
+
+      if (expense.paidBy === "parent1") {
+        data[monthIndex].parent1 += expense.amount;
+      } else {
+        data[monthIndex].parent2 += expense.amount;
+      }
+    }
+
+    return data.map((item) => ({
+      ...item,
+      parent1: roundToTwo(item.parent1),
+      parent2: roundToTwo(item.parent2),
+    }));
+  }, [annualExpenses]);
+
+  const annualCategoryData = useMemo(() => {
+    const totals = CATEGORIES.reduce(
+      (accumulator, currentCategory) => {
+        accumulator[currentCategory] = 0;
+        return accumulator;
+      },
+      {} as Record<ExpenseCategory, number>,
+    );
+
+    for (const expense of annualExpenses) {
+      totals[expense.category] += expense.amount;
+    }
+
+    return CATEGORIES.map((item) => ({
+      name: item,
+      value: roundToTwo(totals[item]),
+      percentage: annualTotals.total > 0 ? (totals[item] / annualTotals.total) * 100 : 0,
+      color: CATEGORY_COLORS[item],
+    })).filter((item) => item.value > 0);
+  }, [annualExpenses, annualTotals.total]);
+
+  const annualTopPayerText = useMemo(() => {
+    if (Math.abs(annualTotals.paidByParent1 - annualTotals.paidByParent2) < 0.005) {
+      return `Égalité · ${formatCurrency(annualTotals.paidByParent1)}$ chacun`;
+    }
+
+    if (annualTotals.paidByParent1 > annualTotals.paidByParent2) {
+      return `${parentNames.parent1} · ${formatCurrency(annualTotals.paidByParent1)}$`;
+    }
+
+    return `${parentNames.parent2} · ${formatCurrency(annualTotals.paidByParent2)}$`;
+  }, [annualTotals.paidByParent1, annualTotals.paidByParent2, parentNames.parent1, parentNames.parent2]);
+
+  const annualBalanceText = useMemo(() => {
+    if (Math.abs(annualTotals.balanceNet) < 0.005) {
+      return "Comptes équilibrés";
+    }
+
+    if (annualTotals.balanceNet > 0) {
+      return `${parentNames.parent2} doit ${formatCurrency(annualTotals.balanceNet)}$ à ${parentNames.parent1}`;
+    }
+
+    return `${parentNames.parent1} doit ${formatCurrency(Math.abs(annualTotals.balanceNet))}$ à ${parentNames.parent2}`;
+  }, [annualTotals.balanceNet, parentNames.parent1, parentNames.parent2]);
+
+  const onExportTaxReport = () => {
+    const doc = new jsPDF();
+    const fileName = `rapport-fiscal-2nest-${selectedYear}.pdf`;
+    let y = 18;
+
+    doc.setFontSize(18);
+    doc.text(`Rapport fiscal 2nest ${selectedYear}`, 14, y);
+
+    y += 10;
+    doc.setFontSize(11);
+    doc.text(`Parents: ${parentNames.parent1} et ${parentNames.parent2}`, 14, y);
+    y += 7;
+    doc.text(`Année fiscale: ${selectedYear}`, 14, y);
+
+    y += 10;
+    doc.setFontSize(13);
+    doc.text("Total par catégorie", 14, y);
+
+    y += 7;
+    doc.setFontSize(11);
+    for (const categoryName of CATEGORIES) {
+      const value = annualCategoryData.find((item) => item.name === categoryName)?.value ?? 0;
+      doc.text(`- ${categoryName}: ${formatCurrency(value)}$`, 14, y);
+      y += 6;
+    }
+
+    y += 4;
+    doc.setFontSize(13);
+    doc.text("Totaux annuels", 14, y);
+
+    y += 7;
+    doc.setFontSize(11);
+    doc.text(`Total des dépenses: ${formatCurrency(annualTotals.total)}$`, 14, y);
+    y += 6;
+    doc.text(`${parentNames.parent1} a payé: ${formatCurrency(annualTotals.paidByParent1)}$`, 14, y);
+    y += 6;
+    doc.text(`${parentNames.parent2} a payé: ${formatCurrency(annualTotals.paidByParent2)}$`, 14, y);
+    y += 6;
+    doc.text(`Solde final: ${annualBalanceText}`, 14, y);
+
+    doc.save(fileName);
+    setToast({ message: "Rapport fiscal PDF généré.", variant: "success" });
+  };
+
   if (checkingSession || isLoadingExpenses) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#F6FAFF] to-[#EEF5FC] px-6">
@@ -1022,6 +1263,125 @@ export default function ExpensesPage() {
             ← Retour
           </Link>
         </header>
+
+        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+          <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">ANALYSE</p>
+          <h2 className="mt-1 text-xl font-semibold text-[#17324D]">📊 Tableau de bord annuel</h2>
+
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-[#D0DFEE] bg-[#F8FBFF] px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setSelectedYear((current) => current - 1)}
+              className="rounded-lg px-2 py-1 text-sm font-semibold text-[#365A7B] transition hover:bg-[#EAF2FB]"
+            >
+              ←
+            </button>
+
+            <div className="flex items-center gap-2 text-sm font-semibold text-[#1F4D77]">
+              <button
+                type="button"
+                onClick={() => setSelectedYear((current) => current - 1)}
+                className="rounded-lg px-2 py-1 transition hover:bg-[#EAF2FB]"
+              >
+                {selectedYear - 1}
+              </button>
+              <span>|</span>
+              <button type="button" className="rounded-lg bg-[#E8F2FC] px-2 py-1 text-[#2E6395]">
+                {selectedYear}
+              </button>
+              <span>|</span>
+              <button
+                type="button"
+                onClick={() => setSelectedYear((current) => current + 1)}
+                className="rounded-lg px-2 py-1 transition hover:bg-[#EAF2FB]"
+              >
+                {selectedYear + 1}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSelectedYear((current) => current + 1)}
+              className="rounded-lg px-2 py-1 text-sm font-semibold text-[#365A7B] transition hover:bg-[#EAF2FB]"
+            >
+              →
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+              <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">💰 Total annuel</p>
+              <p className="mt-2 text-lg font-semibold text-[#17324D]">{formatCurrency(annualTotals.total)}$</p>
+            </div>
+            <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+              <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">👤 Qui a payé le plus</p>
+              <p className="mt-2 text-sm font-semibold text-[#17324D]">{annualTopPayerText}</p>
+            </div>
+            <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+              <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">⚖️ Solde annuel</p>
+              <p className="mt-2 text-sm font-semibold text-[#17324D]">{annualBalanceText}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+            <p className="text-xs font-semibold tracking-[0.14em] text-[#5F81A3]">DÉPENSES PAR MOIS</p>
+            <div className="mt-3 h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={annualBarData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#DDEAF7" />
+                  <XAxis dataKey="month" stroke="#5F81A3" />
+                  <YAxis stroke="#5F81A3" tickFormatter={(value) => `${value}$`} />
+                  <Tooltip formatter={(value) => formatTooltipCurrencyValue(value)} />
+                  <Legend />
+                  <Bar dataKey="parent1" name={parentNames.parent1} fill="#4A90D9" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="parent2" name={parentNames.parent2} fill="#50C878" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+            <p className="text-xs font-semibold tracking-[0.14em] text-[#5F81A3]">RÉPARTITION PAR CATÉGORIE</p>
+            {annualCategoryData.length === 0 ? (
+              <p className="mt-3 text-sm text-[#5E7A95]">Aucune dépense pour {selectedYear}.</p>
+            ) : (
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                <div className="h-72 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={annualCategoryData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={95}>
+                        {annualCategoryData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => formatTooltipCurrencyValue(value)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="space-y-2">
+                  {annualCategoryData.map((item) => (
+                    <div key={item.name} className="flex items-center justify-between rounded-lg border border-[#D7E6F4] bg-white px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                        <span className="text-sm font-medium text-[#2D4B68]">{item.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold text-[#17324D]">{item.percentage.toFixed(1)}% · {formatCurrency(item.value)}$</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onExportTaxReport}
+            className="mt-4 w-full rounded-xl border border-[#D0DFEE] bg-[#F1F7FD] px-4 py-3 text-sm font-semibold text-[#2E6395] transition hover:brightness-95"
+          >
+            📥 Exporter pour les impôts
+          </button>
+        </section>
 
         <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
           <button
