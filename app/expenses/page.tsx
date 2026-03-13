@@ -301,6 +301,32 @@ function getExpenseYear(dateInput: string): number | null {
 }
 
 function extractProfileDisplayName(profile: Record<string, unknown>): string | null {
+  const firstName =
+    typeof profile.first_name === "string"
+      ? profile.first_name.trim()
+      : typeof profile.prenom === "string"
+        ? profile.prenom.trim()
+        : "";
+
+  const lastName =
+    typeof profile.last_name === "string"
+      ? profile.last_name.trim()
+      : typeof profile.nom === "string"
+        ? profile.nom.trim()
+        : "";
+
+  if (firstName.length > 0 && lastName.length > 0) {
+    return `${firstName} ${lastName}`;
+  }
+
+  if (firstName.length > 0) {
+    return firstName;
+  }
+
+  if (lastName.length > 0) {
+    return lastName;
+  }
+
   const candidateKeys = ["full_name", "display_name", "name", "nom", "prenom_nom"];
 
   for (const key of candidateKeys) {

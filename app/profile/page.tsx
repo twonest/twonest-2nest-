@@ -350,6 +350,16 @@ export default function ProfilePage() {
         return;
       }
 
+      await supabase.auth.updateUser({
+        data: {
+          first_name: profile.firstName.trim(),
+          last_name: profile.lastName.trim(),
+          prenom: profile.firstName.trim(),
+          nom: profile.lastName.trim(),
+          name: `${profile.firstName.trim()} ${profile.lastName.trim()}`.trim(),
+        },
+      });
+
       await refreshCoParent(profile.role, supabase, user);
       setToast({ message: "Profil enregistré.", variant: "success" });
     } catch (error) {
