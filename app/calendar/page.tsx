@@ -261,12 +261,14 @@ export default function CalendarPage() {
   const [decisionOpen, setDecisionOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [specialDayFormOpen, setSpecialDayFormOpen] = useState(false);
+  const [journalEditOpen, setJournalEditOpen] = useState(false);
 
   const [formError, setFormError] = useState("");
   const [editError, setEditError] = useState("");
   const [swapError, setSwapError] = useState("");
   const [decisionError, setDecisionError] = useState("");
   const [specialDayError, setSpecialDayError] = useState("");
+  const [journalEditError, setJournalEditError] = useState("");
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const [title, setTitle] = useState("");
@@ -295,6 +297,15 @@ export default function CalendarPage() {
   const [specialDayType, setSpecialDayType] = useState<SpecialDayType>("ferie");
   const [specialDayNotes, setSpecialDayNotes] = useState("");
   const [isCreatingSpecialDay, setIsCreatingSpecialDay] = useState(false);
+  const [isSavingJournalEdit, setIsSavingJournalEdit] = useState(false);
+  const [isDeletingJournalEntry, setIsDeletingJournalEntry] = useState(false);
+
+  const [editingJournalId, setEditingJournalId] = useState("");
+  const [editingJournalEventId, setEditingJournalEventId] = useState("");
+  const [editingJournalStartDate, setEditingJournalStartDate] = useState(() => formatForDateInput(new Date()));
+  const [editingJournalEndDate, setEditingJournalEndDate] = useState(() => formatForDateInput(new Date()));
+  const [editingJournalParentRole, setEditingJournalParentRole] = useState<ParentRole>("parent1");
+  const [editingJournalNotes, setEditingJournalNotes] = useState("");
 
   const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
 
@@ -624,6 +635,24 @@ export default function CalendarPage() {
     setSwapError("");
   };
 
+  const openJournalEditForm = (entry: JournalGardeEntry) => {
+    setJournalEditError("");
+    setEditingJournalId(entry.id);
+    setEditingJournalEventId(entry.eventId);
+    setEditingJournalStartDate(entry.gardeDate);
+    setEditingJournalEndDate(entry.gardeDate);
+    setEditingJournalParentRole(entry.parentRole);
+    setEditingJournalNotes(entry.title);
+    setJournalEditOpen(true);
+  };
+
+  const closeJournalEditForm = () => {
+    setJournalEditOpen(false);
+    setJournalEditError("");
+    setEditingJournalId("");
+    setEditingJournalEventId("");
+  };
+
   const openDecisionModal = (request: SwapRequest, type: DecisionType) => {
     setDecisionError("");
     setDecisionType(type);
@@ -875,6 +904,102 @@ export default function CalendarPage() {
       setSwapError(error instanceof Error ? error.message : "Erreur pendant la création de la demande.");
     } finally {
       setIsCreatingSwapRequest(false);
+    }
+  };
+
+  const onSaveJournalEntry = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!editingJournalId || !editingJournalEventId || !editingJournalStartDate || !editingJournalEndDate) {
+      setJournalEditError("Tous les champs sont obligatoires.");
+      return;
+    }
+
+    const startDate = new Date(`${editingJournalStartDate}T00:00:00`);
+    const endDate = new Date(`${editingJournalEndDate}T00:00:00`);
+
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      setJournalEditError("Dates invalides.");
+      return;
+    }
+
+    if (endDate < startDate) {
+      setJournalEditError("La date fin doit être après ou égale à la date début.");
+      return;
+    }
+
+    setIsSavingJournalEdit(true);
+    setJournalEditError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const gardeDays = listDateKeysBetween(startDate, endDate);
+
+      const { error: deleteError } = await supabase.from("journal_garde").delete().eq("id", editingJournalId);
+      if (deleteError) {
+        setJournalEditError(deleteError.message);
+        return;
+      }
+
+      const rows = gardeDays.map((day) => ({
+        event_id: editingJournalEventId,
+        garde_date: day,
+        parent_role: editingJournalParentRole,
+        title: editingJournalNotes.trim() || "Garde",
+      }));
+
+      const { error } = await supabase.from("journal_garde").upsert(rows, { onConflict: "event_id,garde_date" });
+
+      if (error) {
+        const fallbackRows = gardeDays.map((day) => ({
+          event_id: editingJournalEventId,
+          guard_day: day,
+          parent: editingJournalParentRole,
+          title: editingJournalNotes.trim() || "Garde",
+        }));
+
+        const fallback = await supabase.from("journal_garde").upsert(fallbackRows, { onConflict: "event_id,guard_day" });
+
+        if (fallback.error) {
+          setJournalEditError(fallback.error.message);
+          return;
+        }
+      }
+
+      await refreshJournalEntries(supabase);
+      closeJournalEditForm();
+      setToast({ message: "Entrée du journal modifiée.", variant: "success" });
+    } catch (error) {
+      setJournalEditError(error instanceof Error ? error.message : "Erreur pendant la sauvegarde de l'entrée.");
+    } finally {
+      setIsSavingJournalEdit(false);
+    }
+  };
+
+  const onDeleteJournalEntry = async () => {
+    if (!editingJournalId) {
+      return;
+    }
+
+    setIsDeletingJournalEntry(true);
+    setJournalEditError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.from("journal_garde").delete().eq("id", editingJournalId);
+
+      if (error) {
+        setJournalEditError(error.message);
+        return;
+      }
+
+      await refreshJournalEntries(supabase);
+      closeJournalEditForm();
+      setToast({ message: "Entrée du journal supprimée.", variant: "success" });
+    } catch (error) {
+      setJournalEditError(error instanceof Error ? error.message : "Erreur pendant la suppression de l'entrée.");
+    } finally {
+      setIsDeletingJournalEntry(false);
     }
   };
 
@@ -1359,16 +1484,29 @@ export default function CalendarPage() {
 
               <div className="mt-3 rounded-xl border border-[#D7E6F4] bg-white p-3">
                 <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">LISTE DES JOURS DE GARDE DU MOIS</p>
-                <div className="mt-2 space-y-1 text-sm text-[#2D4B68]">
+                <div className="mt-2 space-y-2 text-sm text-[#2D4B68]">
                   {journalMonthEntries.length === 0 ? (
                     <p>Aucune garde ce mois-ci.</p>
                   ) : (
                     journalMonthEntries
                       .sort((a, b) => a.gardeDate.localeCompare(b.gardeDate))
                       .map((entry) => (
-                        <p key={entry.id}>
-                          {formatDateLabel(entry.gardeDate)} · {entry.parentRole === "parent1" ? "Parent 1" : "Parent 2"}
-                        </p>
+                        <article
+                          key={entry.id}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#E0EBF6] bg-[#FAFCFF] px-3 py-2"
+                        >
+                          <p>
+                            {formatDateLabel(entry.gardeDate)} · {entry.parentRole === "parent1" ? "Parent 1" : "Parent 2"}
+                            {entry.title ? ` · ${entry.title}` : ""}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => openJournalEditForm(entry)}
+                            className="rounded-lg border border-[#D0DFEE] bg-white px-3 py-1.5 text-xs font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+                          >
+                            ✏️ Modifier
+                          </button>
+                        </article>
                       ))
                   )}
                 </div>
@@ -1797,6 +1935,104 @@ export default function CalendarPage() {
               >
                 {isCreatingSwapRequest ? "Envoi..." : "Envoyer la demande"}
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {journalEditOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-[#17324D]">Modifier une entrée du journal</h2>
+              <button
+                type="button"
+                onClick={closeJournalEditForm}
+                className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
+              >
+                ✕
+              </button>
+            </div>
+
+            {journalEditError && (
+              <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm text-[#8D3E45]">
+                {journalEditError}
+              </p>
+            )}
+
+            <form className="space-y-4" onSubmit={onSaveJournalEntry}>
+              <div>
+                <label htmlFor="journalEditStartDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Date début
+                </label>
+                <input
+                  id="journalEditStartDate"
+                  type="date"
+                  value={editingJournalStartDate}
+                  onChange={(event) => setEditingJournalStartDate(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="journalEditEndDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Date fin
+                </label>
+                <input
+                  id="journalEditEndDate"
+                  type="date"
+                  value={editingJournalEndDate}
+                  onChange={(event) => setEditingJournalEndDate(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="journalEditParentRole" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Parent responsable
+                </label>
+                <select
+                  id="journalEditParentRole"
+                  value={editingJournalParentRole}
+                  onChange={(event) => setEditingJournalParentRole(event.target.value as ParentRole)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                >
+                  <option value="parent1">Parent 1</option>
+                  <option value="parent2">Parent 2</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="journalEditNotes" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Notes
+                </label>
+                <textarea
+                  id="journalEditNotes"
+                  value={editingJournalNotes}
+                  onChange={(event) => setEditingJournalNotes(event.target.value)}
+                  rows={3}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                  placeholder="Notes sur la garde"
+                />
+              </div>
+
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={isSavingJournalEdit || isDeletingJournalEntry}
+                  className="flex-1 rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSavingJournalEdit ? "Sauvegarde..." : "💾 Sauvegarder les modifications"}
+                </button>
+                <button
+                  type="button"
+                  onClick={onDeleteJournalEntry}
+                  disabled={isSavingJournalEdit || isDeletingJournalEntry}
+                  className="flex-1 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm font-semibold text-[#8D3E45] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isDeletingJournalEntry ? "Suppression..." : "🗑️ Supprimer cette entrée"}
+                </button>
+              </div>
             </form>
           </div>
         </div>
