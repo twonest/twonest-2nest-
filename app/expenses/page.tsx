@@ -217,11 +217,19 @@ async function normalizeReceiptUrl(
     .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
 
   if (!signedError && signedData?.signedUrl) {
-    const absoluteSignedUrl = signedData.signedUrl.startsWith("http")
-      ? signedData.signedUrl
-      : `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}${signedData.signedUrl}`;
+    let absoluteSignedUrl = signedData.signedUrl;
 
-    if (isReceiptFromBucket(absoluteSignedUrl)) {
+    if (!absoluteSignedUrl.startsWith("http")) {
+      const configuredBaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
+      const rawAbsoluteOrigin = rawReceiptUrl?.startsWith("http") ? new URL(rawReceiptUrl).origin : "";
+      const candidateBaseUrl = configuredBaseUrl || rawAbsoluteOrigin;
+
+      if (candidateBaseUrl) {
+        absoluteSignedUrl = `${candidateBaseUrl}${absoluteSignedUrl}`;
+      }
+    }
+
+    if (absoluteSignedUrl.startsWith("http") && isReceiptFromBucket(absoluteSignedUrl)) {
       return absoluteSignedUrl;
     }
   }
