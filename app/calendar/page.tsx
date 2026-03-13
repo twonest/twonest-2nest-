@@ -9,6 +9,21 @@ import { useRouter } from "next/navigation";
 import { Calendar, momentLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import type { User } from "@supabase/supabase-js";
+import {
+  createEvent,
+  createSpecialDay,
+  createSwapRequest,
+  deleteEvent,
+  fetchEvents,
+  fetchProfileRole,
+  fetchSpecialDays,
+  fetchSwapRequests,
+  updateEvent,
+  updateSwapRequestDecision,
+  type EventRow,
+  type SpecialDayRow,
+  type SwapRequestRow,
+} from "@/lib/calendarApi";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type EventType = "Garde" | "Médecin" | "École" | "Activité";
@@ -48,22 +63,6 @@ type CalendarSpecialDayEvent = {
 
 type CalendarDisplayEvent = CalendarEvent | CalendarSpecialDayEvent;
 
-type SupabaseEventRow = {
-  id?: string | number;
-  title?: string;
-  type?: EventType;
-  start_at?: string;
-  end_at?: string;
-  start_date?: string;
-  end_date?: string;
-  start?: string;
-  end?: string;
-  user_id?: string;
-  owner_id?: string;
-  parent?: string;
-  parent_role?: string;
-};
-
 type SupabaseJournalGardeRow = {
   id?: string | number;
   event_id?: string | number;
@@ -83,51 +82,17 @@ type JournalGardeEntry = {
   title: string;
 };
 
-type SupabaseSpecialDayRow = {
-  id?: string | number;
-  title?: string;
-  name?: string;
-  date?: string;
-  day_date?: string;
-  type?: string;
-  kind?: string;
-  notes?: string;
-  note?: string;
-};
-
-type SwapStatus = "pending" | "accepted" | "refused";
+type SwapStatus = "en_attente" | "acceptee" | "refusee";
 
 type SwapRequest = {
   id: string;
   requesterUserId: string | null;
+  requestDate: string;
   originalDate: string;
   proposedDate: string;
   reason: string;
   status: SwapStatus;
-  responseReason: string | null;
   createdAt: string | null;
-  respondedAt: string | null;
-};
-
-type SupabaseSwapRow = {
-  id?: string | number;
-  requester_user_id?: string;
-  user_id?: string;
-  owner_id?: string;
-  original_date?: string;
-  date_originale?: string;
-  proposed_date?: string;
-  date_proposee?: string;
-  current_date?: string;
-  new_date?: string;
-  reason?: string;
-  request_reason?: string;
-  status?: string;
-  statut?: string;
-  response_reason?: string;
-  refusal_reason?: string;
-  created_at?: string;
-  responded_at?: string;
 };
 
 type SupabaseGuardScheduleRow = {
@@ -335,16 +300,6 @@ function horaireSchemaMigrationMessage(): string {
   return "Le schéma Supabase de 'horaire_garde' est incomplet (colonne manquante, ex: user_id ou agreement_date). Exécutez le script supabase/horaire_garde_schema_run.sql puis rechargez la page.";
 }
 
-function isEventsMissingColumnError(message: string, column: string): boolean {
-  const normalized = message.toLowerCase();
-  const missingColumnHint =
-    normalized.includes("column") && normalized.includes("does not exist")
-      ? true
-      : normalized.includes("could not find") && normalized.includes("schema cache");
-
-  return normalized.includes("events") && normalized.includes(column.toLowerCase()) && missingColumnHint;
-}
-
 function isJournalMissingColumnError(message: string, column: string): boolean {
   const normalized = message.toLowerCase();
   const missingColumnHint =
@@ -353,16 +308,6 @@ function isJournalMissingColumnError(message: string, column: string): boolean {
       : normalized.includes("could not find") && normalized.includes("schema cache");
 
   return normalized.includes("journal_garde") && normalized.includes(column.toLowerCase()) && missingColumnHint;
-}
-
-function isSwapMissingColumnError(message: string, column: string): boolean {
-  const normalized = message.toLowerCase();
-  const missingColumnHint =
-    normalized.includes("column") && normalized.includes("does not exist")
-      ? true
-      : normalized.includes("could not find") && normalized.includes("schema cache");
-
-  return normalized.includes("swap_requests") && normalized.includes(column.toLowerCase()) && missingColumnHint;
 }
 
 function toUtcDayMs(date: Date): number {
@@ -436,6 +381,7 @@ export default function CalendarPage() {
   const [editStartAt, setEditStartAt] = useState("");
   const [editEndAt, setEditEndAt] = useState("");
 
+  const [requestDate, setRequestDate] = useState(() => formatForDateInput(new Date()));
   const [originalDate, setOriginalDate] = useState(() => formatForDateInput(new Date()));
   const [proposedDate, setProposedDate] = useState(() => formatForDateInput(new Date(Date.now() + 24 * 60 * 60 * 1000)));
   const [swapReason, setSwapReason] = useState("");
@@ -502,25 +448,16 @@ export default function CalendarPage() {
     window.localStorage.setItem(SHARED_MONTH_KEY, toMonthValue(calendarDate));
   }, [calendarDate]);
 
-  const refreshEvents = async (client = getSupabaseBrowserClient()) => {
-    let query = client.from("events").select("*");
-    let { data, error } = await query.order("start_at", { ascending: true });
+  const refreshEvents = async (client = getSupabaseBrowserClient(), userId?: string) => {
+    try {
+      const rows = await fetchEvents(client, userId);
 
-    if (error) {
-      const fallback = await client.from("events").select("*");
-      data = fallback.data;
-      error = fallback.error;
-    }
+      setFormError("");
 
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-
-    const mapped = (data as SupabaseEventRow[])
+      const mapped = rows
       .map((row): CalendarEvent | null => {
-        const rowStart = row.start_at ?? row.start_date ?? row.start;
-        const rowEnd = row.end_at ?? row.end_date ?? row.end;
+        const rowStart = row.start_at;
+        const rowEnd = row.end_at;
 
         if (!row.id || !row.title || !rowStart || !rowEnd || !row.type) {
           return null;
@@ -540,13 +477,16 @@ export default function CalendarPage() {
           type: row.type,
           start: startDate,
           end: endDate,
-          ownerUserId: row.user_id ?? row.owner_id ?? null,
-          parent: row.parent ?? row.parent_role ?? null,
+          ownerUserId: row.user_id ?? null,
+          parent: row.parent ?? null,
         };
       })
       .filter((event): event is CalendarEvent => event !== null);
 
-    setEvents(mapped);
+      setEvents(mapped);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Impossible de charger les événements.");
+    }
   };
 
   const refreshJournalEntries = async (client = getSupabaseBrowserClient()) => {
@@ -584,22 +524,13 @@ export default function CalendarPage() {
   };
 
   const refreshSpecialDays = async (client = getSupabaseBrowserClient()) => {
-    let { data, error } = await client.from("jours_speciaux").select("*").order("date", { ascending: true });
+    try {
+      const rows = await fetchSpecialDays(client);
 
-    if (error) {
-      const fallback = await client.from("jours_speciaux").select("*");
-      data = fallback.data;
-      error = fallback.error;
-    }
-
-    if (error) {
-      return;
-    }
-
-    const mapped = (data as SupabaseSpecialDayRow[])
+      const mapped = (rows as SpecialDayRow[])
       .map((row): SpecialDay | null => {
-        const date = row.date ?? row.day_date;
-        const title = row.title ?? row.name;
+        const date = row.date;
+        const title = row.title;
         if (!row.id || !date || !title) {
           return null;
         }
@@ -608,13 +539,16 @@ export default function CalendarPage() {
           id: String(row.id),
           title,
           date,
-          type: normalizeSpecialDayType(row.type ?? row.kind),
-          notes: row.notes ?? row.note ?? null,
+          type: normalizeSpecialDayType(row.type),
+          notes: row.notes ?? null,
         };
       })
       .filter((item): item is SpecialDay => item !== null);
 
-    setSpecialDays(mapped);
+      setSpecialDays(mapped);
+    } catch {
+      return;
+    }
   };
 
   const syncJournalForEvent = async (
@@ -671,56 +605,41 @@ export default function CalendarPage() {
   };
 
   const refreshSwapRequests = async (client = getSupabaseBrowserClient()) => {
-    let query = client.from("swap_requests").select("*");
-    let { data, error } = await query.order("created_at", { ascending: false });
+    try {
+      const rows = await fetchSwapRequests(client);
 
-    if (error) {
-      const fallback = await client.from("swap_requests").select("*");
-      data = fallback.data;
-      error = fallback.error;
-    }
-
-    if (error) {
-      setSwapError(error.message);
-      return;
-    }
-
-    const mapped = (data as SupabaseSwapRow[])
+      const mapped = (rows as SwapRequestRow[])
       .map((row): SwapRequest | null => {
-        const rowOriginalDate = row.original_date ?? row.date_originale ?? row.current_date;
-        const rowProposedDate = row.proposed_date ?? row.date_proposee ?? row.new_date;
+        const rowRequestDate = row.date_demande;
+        const rowOriginalDate = row.date_originale;
+        const rowProposedDate = row.date_proposee;
 
-        if (!row.id || !rowOriginalDate || !rowProposedDate) {
+        if (!row.id || !rowRequestDate || !rowOriginalDate || !rowProposedDate) {
           return null;
         }
 
-        const statusCandidateRaw = row.status ?? row.statut ?? "pending";
-        const statusCandidate =
-          statusCandidateRaw === "en_attente"
-            ? "pending"
-            : statusCandidateRaw === "acceptee"
-              ? "accepted"
-              : statusCandidateRaw === "refusee"
-                ? "refused"
-                : statusCandidateRaw;
+        const statusCandidateRaw = row.statut ?? "en_attente";
+        const statusCandidate = statusCandidateRaw;
         const status: SwapStatus =
-          statusCandidate === "accepted" || statusCandidate === "refused" ? statusCandidate : "pending";
+          statusCandidate === "acceptee" || statusCandidate === "refusee" ? statusCandidate : "en_attente";
 
         return {
           id: String(row.id),
-          requesterUserId: row.requester_user_id ?? row.user_id ?? row.owner_id ?? null,
+          requesterUserId: row.demandeur_id ?? null,
+          requestDate: rowRequestDate,
           originalDate: rowOriginalDate,
           proposedDate: rowProposedDate,
-          reason: row.reason ?? row.request_reason ?? "",
+          reason: row.raison ?? "",
           status,
-          responseReason: row.response_reason ?? row.refusal_reason ?? null,
-          createdAt: row.created_at ?? null,
-          respondedAt: row.responded_at ?? null,
+          createdAt: rowRequestDate,
         };
       })
       .filter((request): request is SwapRequest => request !== null);
 
-    setSwapRequests(mapped);
+      setSwapRequests(mapped);
+    } catch (error) {
+      setSwapError(error instanceof Error ? error.message : "Impossible de charger les demandes.");
+    }
   };
 
   useEffect(() => {
@@ -751,16 +670,11 @@ export default function CalendarPage() {
       setUser(userData.user);
       setCheckingSession(false);
 
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("user_id", userData.user.id)
-        .maybeSingle();
-
-      setProfileRole(normalizeParentRole(profileData?.role));
+      const profileRoleRaw = await fetchProfileRole(supabase, userData.user.id);
+      setProfileRole(normalizeParentRole(profileRoleRaw));
 
       await Promise.all([
-        refreshEvents(supabase),
+        refreshEvents(supabase, userData.user.id),
         refreshSwapRequests(supabase),
         refreshJournalEntries(supabase),
         refreshSpecialDays(supabase),
@@ -822,6 +736,7 @@ export default function CalendarPage() {
 
   const openSwapFormForDate = (dateKey: string) => {
     setSwapError("");
+    setRequestDate(dateKey);
     setOriginalDate(dateKey);
 
     const baseDate = new Date(`${dateKey}T00:00:00`);
@@ -947,47 +862,19 @@ export default function CalendarPage() {
         user_id: user.id,
       };
 
-      const { error: insertError } = await supabase.from("events").insert({
+      const createdEventId = await createEvent(supabase, {
         ...basePayload,
         parent: profileRole,
         start_at: startDate.toISOString(),
         end_at: endDate.toISOString(),
-      }).select("id").maybeSingle();
-
-      let createdEventId: string | null = null;
-
-      if (!insertError) {
-        const { data: latest } = await supabase
-          .from("events")
-          .select("id")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        createdEventId = latest?.id ? String(latest.id) : null;
-      } else {
-        const { data: fallbackInserted, error: fallbackError } = await supabase.from("events").insert({
-          ...basePayload,
-          parent: profileRole,
-          start_date: startDate.toISOString(),
-          end_date: endDate.toISOString(),
-        }).select("id").maybeSingle();
-
-        if (fallbackError) {
-          setFormError(fallbackError.message);
-          return;
-        }
-
-        createdEventId = fallbackInserted?.id ? String(fallbackInserted.id) : null;
-      }
+      });
 
       if (createdEventId) {
         await syncJournalForEvent(createdEventId, eventType, startDate, endDate, profileRole, title.trim(), supabase);
         await refreshJournalEntries(supabase);
       }
 
-      await refreshEvents();
+      await refreshEvents(supabase, user.id);
       setTitle("");
       setEventType("Garde");
       setStartAt(formatForDateTimeLocal(new Date()));
@@ -1032,37 +919,17 @@ export default function CalendarPage() {
         type: editEventType,
       };
 
-      const { error: updateError } = await supabase
-        .from("events")
-        .update({
-          ...basePayload,
-          parent: profileRole,
-          start_at: startDate.toISOString(),
-          end_at: endDate.toISOString(),
-        })
-        .eq("id", editingEventId);
-
-      if (updateError) {
-        const { error: fallbackError } = await supabase
-          .from("events")
-          .update({
-            ...basePayload,
-            parent: profileRole,
-            start_date: startDate.toISOString(),
-            end_date: endDate.toISOString(),
-          })
-          .eq("id", editingEventId);
-
-        if (fallbackError) {
-          setEditError(fallbackError.message);
-          return;
-        }
-      }
+      await updateEvent(supabase, editingEventId, {
+        ...basePayload,
+        parent: profileRole,
+        start_at: startDate.toISOString(),
+        end_at: endDate.toISOString(),
+      });
 
       await syncJournalForEvent(editingEventId, editEventType, startDate, endDate, profileRole, editTitle.trim(), supabase);
       await refreshJournalEntries(supabase);
 
-      await refreshEvents();
+      await refreshEvents(supabase, user?.id);
       closeEditForm();
       setToast({ message: "Événement modifié avec succès.", variant: "success" });
     } catch (error) {
@@ -1082,12 +949,7 @@ export default function CalendarPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.from("events").delete().eq("id", editingEventId);
-
-      if (error) {
-        setEditError(error.message);
-        return;
-      }
+      await deleteEvent(supabase, editingEventId);
 
       const journalDelete = await supabase.from("journal_garde").delete().eq("event_id", editingEventId);
       if (journalDelete.error && !isJournalMissingColumnError(journalDelete.error.message, "event_id")) {
@@ -1096,7 +958,7 @@ export default function CalendarPage() {
       }
       await refreshJournalEntries(supabase);
 
-      await refreshEvents();
+      await refreshEvents(supabase, user?.id);
       closeEditForm();
       setToast({ message: "Événement supprimé.", variant: "success" });
     } catch (error) {
@@ -1109,7 +971,7 @@ export default function CalendarPage() {
   const onCreateSwapRequest = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!user || originalDate.length === 0 || proposedDate.length === 0 || swapReason.trim().length === 0) {
+    if (!user || requestDate.length === 0 || originalDate.length === 0 || proposedDate.length === 0 || swapReason.trim().length === 0) {
       setSwapError("Tous les champs sont obligatoires.");
       return;
     }
@@ -1120,44 +982,18 @@ export default function CalendarPage() {
     try {
       const supabase = getSupabaseBrowserClient();
       const payload = {
-        requester_user_id: user.id,
-        original_date: originalDate,
-        proposed_date: proposedDate,
+        demandeur_id: user.id,
+        date_demande: requestDate,
         date_originale: originalDate,
         date_proposee: proposedDate,
-        reason: swapReason.trim(),
-        status: "pending",
-        statut: "en_attente",
+        raison: swapReason.trim(),
+        statut: "en_attente" as const,
       };
 
-      const { error } = await supabase.from("swap_requests").insert(payload);
-
-      if (error) {
-        const fallbackInsert = await supabase.from("swap_requests").insert({
-          requester_user_id: user.id,
-          original_date: originalDate,
-          proposed_date: proposedDate,
-          reason: swapReason.trim(),
-          status: "pending",
-        });
-
-        if (fallbackInsert.error) {
-          const legacyInsert = await supabase.from("swap_requests").insert({
-            user_id: user.id,
-            current_date: originalDate,
-            new_date: proposedDate,
-            reason: swapReason.trim(),
-            status: "pending",
-          });
-
-          if (legacyInsert.error) {
-            setSwapError(legacyInsert.error.message);
-            return;
-          }
-        }
-      }
+      await createSwapRequest(supabase, payload);
 
       await refreshSwapRequests();
+      setRequestDate(formatForDateInput(new Date()));
       setOriginalDate(formatForDateInput(new Date()));
       setProposedDate(formatForDateInput(new Date(Date.now() + 24 * 60 * 60 * 1000)));
       setSwapReason("");
@@ -1305,49 +1141,11 @@ export default function CalendarPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const newStatus = decisionType === "accept" ? "accepted" : "refused";
+      const newStatus = decisionType === "accept" ? "acceptee" : "refusee";
 
-      const { error } = await supabase
-        .from("swap_requests")
-        .update({
-          status: newStatus,
-          statut: decisionType === "accept" ? "acceptee" : "refusee",
-          responded_at: new Date().toISOString(),
-          response_reason: decisionType === "refuse" ? decisionReason.trim() : null,
-        })
-        .eq("id", decisionRequestId);
-
-      if (error) {
-        let fallbackError: { message: string } | null = error;
-
-        if (isSwapMissingColumnError(error.message, "statut")) {
-          const fallbackWithoutStatut = await supabase
-            .from("swap_requests")
-            .update({
-              status: newStatus,
-              responded_at: new Date().toISOString(),
-              response_reason: decisionType === "refuse" ? decisionReason.trim() : null,
-            })
-            .eq("id", decisionRequestId);
-          fallbackError = fallbackWithoutStatut.error;
-        }
-
-        if (fallbackError) {
-          const legacyFallback = await supabase
-            .from("swap_requests")
-            .update({
-              status: newStatus,
-              refusal_reason: decisionType === "refuse" ? decisionReason.trim() : null,
-            })
-            .eq("id", decisionRequestId);
-          fallbackError = legacyFallback.error;
-        }
-
-        if (fallbackError) {
-          setDecisionError(fallbackError.message);
-          return;
-        }
-      }
+      await updateSwapRequestDecision(supabase, decisionRequestId, {
+        statut: newStatus,
+      });
 
       await refreshSwapRequests();
       closeDecisionModal();
@@ -1363,17 +1161,17 @@ export default function CalendarPage() {
   };
 
   const statusUi: Record<SwapStatus, { label: string; emoji: string; className: string }> = {
-    pending: {
+    en_attente: {
       label: "En attente",
       emoji: "🟡",
       className: "border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]",
     },
-    accepted: {
+    acceptee: {
       label: "Acceptée",
       emoji: "✅",
       className: "border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]",
     },
-    refused: {
+    refusee: {
       label: "Refusée",
       emoji: "❌",
       className: "border-[#E3B4B8] bg-[#FFF4F5] text-[#8D3E45]",
@@ -1501,28 +1299,13 @@ export default function CalendarPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.from("jours_speciaux").insert({
+      await createSpecialDay(supabase, {
         title: specialDayTitle.trim(),
         date: specialDayDate,
         type: specialDayType,
         notes: specialDayNotes.trim() || null,
         user_id: user.id,
       });
-
-      if (error) {
-        const fallback = await supabase.from("jours_speciaux").insert({
-          name: specialDayTitle.trim(),
-          day_date: specialDayDate,
-          kind: specialDayType,
-          note: specialDayNotes.trim() || null,
-          owner_id: user.id,
-        });
-
-        if (fallback.error) {
-          setSpecialDayError(fallback.error.message);
-          return;
-        }
-      }
 
       await refreshSpecialDays(supabase);
       setSpecialDayTitle("");
@@ -1595,10 +1378,7 @@ export default function CalendarPage() {
       const startIso = startDate.toISOString();
       const endIso = endDate.toISOString();
 
-      let existingEventsData: Array<{ id?: string | number }> = [];
-      let existingEventsError: { message: string } | null = null;
-
-      const existingByStartAt = await supabase
+      const { data: existingEventsData, error: existingEventsError } = await supabase
         .from("events")
         .select("id")
         .eq("user_id", user.id)
@@ -1607,41 +1387,12 @@ export default function CalendarPage() {
         .gte("start_at", startIso)
         .lt("start_at", endIso);
 
-      if (existingByStartAt.error) {
-        const fallbackByStartDate = await supabase
-          .from("events")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("type", "Garde")
-          .eq("title", "Horaire de garde (auto)")
-          .gte("start_date", startIso)
-          .lt("start_date", endIso);
-
-        if (fallbackByStartDate.error) {
-          const fallbackByStart = await supabase
-            .from("events")
-            .select("id")
-            .eq("user_id", user.id)
-            .eq("type", "Garde")
-            .eq("title", "Horaire de garde (auto)")
-            .gte("start", startIso)
-            .lt("start", endIso);
-
-          existingEventsData = fallbackByStart.data ?? [];
-          existingEventsError = fallbackByStart.error;
-        } else {
-          existingEventsData = fallbackByStartDate.data ?? [];
-        }
-      } else {
-        existingEventsData = existingByStartAt.data ?? [];
-      }
-
       if (existingEventsError) {
         setScheduleError(existingEventsError.message);
         return;
       }
 
-      const existingEventIds = existingEventsData
+      const existingEventIds = (existingEventsData ?? [])
         .map((row) => (row.id ? String(row.id) : ""))
         .filter((value) => value.length > 0);
 
@@ -1690,70 +1441,20 @@ export default function CalendarPage() {
         return;
       }
 
-      let insertedRows:
-        | Array<{ id?: string | number; start_at?: string; start_date?: string; start?: string; parent?: string; parent_role?: string }>
-        | null = null;
-
-      const inserted = await supabase
+      const { data: insertedRows, error: insertedError } = await supabase
         .from("events")
         .insert(generatedEvents)
         .select("*");
 
-      if (inserted.error) {
-        const fallbackInserted = await supabase
-          .from("events")
-          .insert(
-            generatedEvents.map((row) => ({
-              title: row.title,
-              type: row.type,
-              user_id: row.user_id,
-              parent: row.parent,
-              start_date: row.start_at,
-              end_date: row.end_at,
-            })),
-          )
-          .select("*");
-
-        if (fallbackInserted.error) {
-          if (
-            isEventsMissingColumnError(fallbackInserted.error.message, "start_date") ||
-            isEventsMissingColumnError(fallbackInserted.error.message, "end_date")
-          ) {
-            const fallbackLegacyInserted = await supabase
-              .from("events")
-              .insert(
-                generatedEvents.map((row) => ({
-                  title: row.title,
-                  type: row.type,
-                  user_id: row.user_id,
-                  parent: row.parent,
-                  start: row.start_at,
-                  end: row.end_at,
-                })),
-              )
-              .select("*");
-
-            if (fallbackLegacyInserted.error) {
-              setScheduleError(fallbackLegacyInserted.error.message);
-              return;
-            }
-
-            insertedRows = fallbackLegacyInserted.data ?? [];
-          } else {
-            setScheduleError(fallbackInserted.error.message);
-            return;
-          }
-        } else {
-          insertedRows = fallbackInserted.data ?? [];
-        }
-      } else {
-        insertedRows = inserted.data ?? [];
+      if (insertedError) {
+        setScheduleError(insertedError.message);
+        return;
       }
 
       const journalRows = (insertedRows ?? [])
         .map((row) => {
           const id = row.id ? String(row.id) : "";
-          const startValue = row.start_at ?? row.start_date ?? row.start;
+          const startValue = row.start_at;
           if (!id || !startValue) {
             return null;
           }
@@ -1762,7 +1463,7 @@ export default function CalendarPage() {
           return {
             event_id: id,
             garde_date: gardeDate,
-            parent_role: normalizeParentRole(row.parent ?? row.parent_role),
+            parent_role: normalizeParentRole(row.parent),
             title: "Horaire de garde (auto)",
           };
         })
@@ -1803,7 +1504,7 @@ export default function CalendarPage() {
         }
       }
 
-      await refreshEvents(supabase);
+      await refreshEvents(supabase, user.id);
       await refreshJournalEntries(supabase);
       closeScheduleForm();
       setToast({ message: "Horaire appliqué sur les 12 prochains mois.", variant: "success" });
@@ -2261,7 +1962,7 @@ export default function CalendarPage() {
             ) : (
               swapRequests.map((request) => {
                 const isMine = request.requesterUserId === user?.id;
-                const canModerate = !isMine && request.status === "pending";
+                const canModerate = !isMine && request.status === "en_attente";
                 const statusInfo = statusUi[request.status];
 
                 return (
@@ -2276,9 +1977,6 @@ export default function CalendarPage() {
                           {isMine ? "Demande envoyée par vous" : "Demande du co-parent"}
                           {request.createdAt ? ` · ${new Date(request.createdAt).toLocaleString("fr-CA")}` : ""}
                         </p>
-                        {request.responseReason && (
-                          <p className="mt-1 text-xs text-[#8D3E45]">Raison du refus: {request.responseReason}</p>
-                        )}
                       </div>
 
                       <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold ${statusInfo.className}`}>
@@ -2557,6 +2255,19 @@ export default function CalendarPage() {
             )}
 
             <form className="space-y-4" onSubmit={onCreateSwapRequest}>
+              <div>
+                <label htmlFor="requestDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                  Date de demande
+                </label>
+                <input
+                  id="requestDate"
+                  type="date"
+                  value={requestDate}
+                  onChange={(event) => setRequestDate(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
               <div>
                 <label htmlFor="originalDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
                   Date originale
