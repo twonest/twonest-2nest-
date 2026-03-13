@@ -127,6 +127,17 @@ type SupabaseSwapRow = {
   responded_at?: string;
 };
 
+type SupabaseGuardScheduleRow = {
+  schedule_type?: string;
+  custom_schedule?: unknown;
+  exchange_time?: string;
+  exchange_location?: string;
+  legal_contact_name?: string;
+  case_number?: string;
+  agreement_date?: string;
+  mediator_notes?: string;
+};
+
 type ToastState = {
   message: string;
   variant: "success";
@@ -258,6 +269,52 @@ function createDefaultCustomSchedule(): CustomScheduleMap {
     5: { enabled: true, parentRole: "parent1" },
     6: { enabled: true, parentRole: "parent2" },
   };
+}
+
+function normalizeGuardScheduleType(value: string | undefined): GuardScheduleType {
+  if (value === "biweekly_alternating" || value === "custom_shared") {
+    return value;
+  }
+  return "weekly_alternating";
+}
+
+function normalizeCustomSchedule(value: unknown): CustomScheduleMap {
+  const normalized = createDefaultCustomSchedule();
+  if (!value || typeof value !== "object") {
+    return normalized;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  for (const day of [0, 1, 2, 3, 4, 5, 6]) {
+    const rawRule = candidate[String(day)];
+    if (!rawRule || typeof rawRule !== "object") {
+      continue;
+    }
+
+    const typedRule = rawRule as Record<string, unknown>;
+    const enabled = typeof typedRule.enabled === "boolean" ? typedRule.enabled : normalized[day].enabled;
+    const parentRaw =
+      typeof typedRule.parentRole === "string"
+        ? typedRule.parentRole
+        : typeof typedRule.parent_role === "string"
+          ? typedRule.parent_role
+          : normalized[day].parentRole;
+
+    normalized[day] = {
+      enabled,
+      parentRole: normalizeParentRole(parentRaw),
+    };
+  }
+
+  return normalized;
+}
+
+function normalizeTimeInput(value: string | undefined): string {
+  if (!value || value.length < 5) {
+    return "17:00";
+  }
+  return value.slice(0, 5);
 }
 
 function toUtcDayMs(date: Date): number {
@@ -693,9 +750,45 @@ export default function CalendarPage() {
     setSwapError("");
   };
 
-  const openScheduleForm = () => {
+  const openScheduleForm = async () => {
     setScheduleError("");
     setScheduleFormOpen(true);
+
+    if (!user) {
+      return;
+    }
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { data, error } = await supabase
+        .from("horaire_garde")
+        .select(
+          "schedule_type,custom_schedule,exchange_time,exchange_location,legal_contact_name,case_number,agreement_date,mediator_notes",
+        )
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (error) {
+        setScheduleError(error.message);
+        return;
+      }
+
+      if (!data) {
+        return;
+      }
+
+      const row = data as SupabaseGuardScheduleRow;
+      setScheduleType(normalizeGuardScheduleType(row.schedule_type));
+      setCustomSchedule(normalizeCustomSchedule(row.custom_schedule));
+      setExchangeTime(normalizeTimeInput(row.exchange_time));
+      setExchangeLocation(row.exchange_location ?? "");
+      setLegalContactName(row.legal_contact_name ?? "");
+      setLegalCaseNumber(row.case_number ?? "");
+      setAgreementDate(row.agreement_date ?? formatForDateInput(new Date()));
+      setMediatorNotes(row.mediator_notes ?? "");
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "Impossible de charger l'horaire sauvegardé.");
+    }
   };
 
   const closeScheduleForm = () => {
