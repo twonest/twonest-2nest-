@@ -20,6 +20,8 @@ type ExpenseItem = {
   expenseDate: string;
   reimbursed: boolean;
   receiptUrl: string | null;
+  parent1ShareAmount: number;
+  parent2ShareAmount: number;
 };
 
 type SupabaseExpenseRow = {
@@ -41,6 +43,21 @@ type SupabaseExpenseRow = {
   reimbursed_at?: string | null;
   status?: string;
   recu_url?: string;
+  parent1_share_amount?: number | string;
+  parent2_share_amount?: number | string;
+  split_parent1?: number | string;
+  split_parent2?: number | string;
+  parent1_share_pct?: number | string;
+  parent2_share_pct?: number | string;
+};
+
+type SupabasePartageRegleRow = {
+  category?: string;
+  categorie?: string;
+  parent1_pct?: number | string;
+  parent2_pct?: number | string;
+  parent1_percentage?: number | string;
+  parent2_percentage?: number | string;
 };
 
 type SupabaseExpenseReviewRow = {
@@ -81,6 +98,14 @@ type ToastState = {
 
 const CATEGORIES: ExpenseCategory[] = ["Médical", "Scolaire", "Vêtements", "Activités", "Nourriture", "Autre"];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
+const DEFAULT_SHARE_RULES: Record<ExpenseCategory, number> = {
+  Médical: 50,
+  Scolaire: 50,
+  Vêtements: 50,
+  Activités: 50,
+  Nourriture: 50,
+  Autre: 50,
+};
 
 function parseAmount(value: number | string | undefined): number | null {
   if (typeof value === "number") {
@@ -93,6 +118,10 @@ function parseAmount(value: number | string | undefined): number | null {
   }
 
   return null;
+}
+
+function roundToTwo(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function normalizePaidBy(value: string | undefined): PaidBy {
@@ -205,6 +234,22 @@ function toDateOnlyValue(dateInput: string): string | null {
   return `${parsedDate.getFullYear()}-${month}-${day}`;
 }
 
+function clampPercentage(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 50;
+  }
+
+  if (value < 0) {
+    return 0;
+  }
+
+  if (value > 100) {
+    return 100;
+  }
+
+  return Math.round(value * 100) / 100;
+}
+
 export default function ExpensesPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -236,6 +281,9 @@ export default function ExpensesPage() {
   const [receiptViewerExpense, setReceiptViewerExpense] = useState<ExpenseItem | null>(null);
   const [contestingReview, setContestingReview] = useState<ExpenseReview | null>(null);
   const [contestReasonInput, setContestReasonInput] = useState("");
+  const [shareRules, setShareRules] = useState<Record<ExpenseCategory, number>>(DEFAULT_SHARE_RULES);
+  const [isShareSettingsOpen, setIsShareSettingsOpen] = useState(false);
+  const [isSavingShareRules, setIsSavingShareRules] = useState(false);
 
   const [formError, setFormError] = useState("");
   const [listError, setListError] = useState("");
@@ -321,6 +369,83 @@ export default function ExpensesPage() {
     setContestReasonInput("");
   };
 
+  const onChangeParent1Share = (categoryName: ExpenseCategory, nextValue: string) => {
+    const numeric = clampPercentage(Number(nextValue.replace(",", ".")));
+    setShareRules((current) => ({
+      ...current,
+      [categoryName]: numeric,
+    }));
+  };
+
+  const refreshShareRules = async (client = getSupabaseBrowserClient()) => {
+    let { data, error } = await client.from("partage_regles").select("*");
+
+    if (error) {
+      setShareRules(DEFAULT_SHARE_RULES);
+      return;
+    }
+
+    const nextRules: Record<ExpenseCategory, number> = { ...DEFAULT_SHARE_RULES };
+
+    for (const row of (data ?? []) as SupabasePartageRegleRow[]) {
+      const rowCategory = normalizeCategory(row.category ?? row.categorie);
+      const parsedParent1 = parseAmount(row.parent1_pct ?? row.parent1_percentage);
+      if (parsedParent1 !== null) {
+        nextRules[rowCategory] = clampPercentage(parsedParent1);
+      }
+    }
+
+    setShareRules(nextRules);
+  };
+
+  const onSaveShareRules = async () => {
+    setIsSavingShareRules(true);
+    setListError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+
+      for (const categoryName of CATEGORIES) {
+        const parent1Pct = clampPercentage(shareRules[categoryName] ?? 50);
+        const parent2Pct = clampPercentage(100 - parent1Pct);
+
+        const { error } = await supabase.from("partage_regles").upsert(
+          {
+            category: categoryName,
+            parent1_pct: parent1Pct,
+            parent2_pct: parent2Pct,
+          },
+          { onConflict: "category" },
+        );
+
+        if (!error) {
+          continue;
+        }
+
+        const fallback = await supabase.from("partage_regles").upsert(
+          {
+            categorie: categoryName,
+            parent1_percentage: parent1Pct,
+            parent2_percentage: parent2Pct,
+          },
+          { onConflict: "categorie" },
+        );
+
+        if (fallback.error) {
+          setListError(fallback.error.message);
+          return;
+        }
+      }
+
+      setToast({ message: "Entente de partage sauvegardée.", variant: "success" });
+      await refreshShareRules();
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : "Erreur pendant la sauvegarde des règles.");
+    } finally {
+      setIsSavingShareRules(false);
+    }
+  };
+
   const refreshExpenses = async (client = getSupabaseBrowserClient()) => {
     let query = client.from("expenses").select("*");
     let { data, error } = await query.order("expense_date", { ascending: false });
@@ -353,6 +478,9 @@ export default function ExpensesPage() {
 
         const normalizedReceiptUrl = row.recu_url ?? null;
 
+        const parent1ShareAmount = parseAmount(row.parent1_share_amount) ?? parseAmount(row.split_parent1);
+        const parent2ShareAmount = parseAmount(row.parent2_share_amount) ?? parseAmount(row.split_parent2);
+
         return {
           id: String(row.id),
           amount: parsedAmount,
@@ -362,6 +490,8 @@ export default function ExpensesPage() {
           expenseDate: rawDate,
           reimbursed,
           receiptUrl: normalizedReceiptUrl,
+          parent1ShareAmount: parent1ShareAmount ?? roundToTwo(parsedAmount / 2),
+          parent2ShareAmount: parent2ShareAmount ?? roundToTwo(parsedAmount / 2),
         };
       });
 
@@ -523,6 +653,7 @@ export default function ExpensesPage() {
       setCurrentParentRole(normalizeParentRole(profileData?.role));
 
       setCheckingSession(false);
+      await refreshShareRules(supabase);
       await refreshExpenses(supabase);
       await refreshExpenseReviews(supabase);
       setIsLoadingExpenses(false);
@@ -547,6 +678,10 @@ export default function ExpensesPage() {
     event.preventDefault();
 
     const parsedAmount = Number(amount.replace(",", "."));
+    const parent1Pct = clampPercentage(shareRules[category] ?? 50);
+    const parent2Pct = clampPercentage(100 - parent1Pct);
+    const parent1ShareAmount = roundToTwo((parsedAmount * parent1Pct) / 100);
+    const parent2ShareAmount = roundToTwo(parsedAmount - parent1ShareAmount);
 
     if (!user || !Number.isFinite(parsedAmount) || parsedAmount <= 0 || description.trim().length === 0 || !expenseDate) {
       setFormError("Tous les champs sont obligatoires et le montant doit être valide.");
@@ -589,6 +724,10 @@ export default function ExpensesPage() {
           paid_by: paidBy,
           expense_date: expenseDate,
           recu_url: uploadedReceiptUrl,
+          parent1_share_pct: parent1Pct,
+          parent2_share_pct: parent2Pct,
+          parent1_share_amount: parent1ShareAmount,
+          parent2_share_amount: parent2ShareAmount,
           reimbursed: false,
           status: "unpaid",
         },
@@ -600,6 +739,10 @@ export default function ExpensesPage() {
           paid_by: paidBy,
           expense_date: expenseDate,
           recu_url: uploadedReceiptUrl,
+          parent1_share_pct: parent1Pct,
+          parent2_share_pct: parent2Pct,
+          parent1_share_amount: parent1ShareAmount,
+          parent2_share_amount: parent2ShareAmount,
           reimbursed: false,
           status: "unpaid",
         },
@@ -611,6 +754,10 @@ export default function ExpensesPage() {
           parent: paidBy,
           date: expenseDate,
           recu_url: uploadedReceiptUrl,
+          parent1_share_pct: parent1Pct,
+          parent2_share_pct: parent2Pct,
+          parent1_share_amount: parent1ShareAmount,
+          parent2_share_amount: parent2ShareAmount,
           status: "Non remboursé",
         },
         {
@@ -620,6 +767,10 @@ export default function ExpensesPage() {
           categorie: category,
           parent: paidBy,
           date: expenseDate,
+          parent1_share_pct: parent1Pct,
+          parent2_share_pct: parent2Pct,
+          parent1_share_amount: parent1ShareAmount,
+          parent2_share_amount: parent2ShareAmount,
           status: "Non remboursé",
         },
       ];
@@ -799,9 +950,11 @@ export default function ExpensesPage() {
       }
 
       if (expense.paidBy === "parent1") {
-        net += expense.amount / 2;
+        const parent2Share = expense.parent2ShareAmount ?? expense.amount / 2;
+        net += parent2Share;
       } else {
-        net -= expense.amount / 2;
+        const parent1Share = expense.parent1ShareAmount ?? expense.amount / 2;
+        net -= parent1Share;
       }
     }
 
@@ -869,6 +1022,67 @@ export default function ExpensesPage() {
             ← Retour
           </Link>
         </header>
+
+        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+          <button
+            type="button"
+            onClick={() => setIsShareSettingsOpen((current) => !current)}
+            className="flex w-full items-center justify-between rounded-xl border border-[#D0DFEE] bg-[#F8FBFF] px-4 py-3 text-left transition hover:bg-[#F1F7FD]"
+          >
+            <div>
+              <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">PARAMÈTRES</p>
+              <p className="mt-1 text-base font-semibold text-[#17324D]">⚙️ Paramètres de partage</p>
+            </div>
+            <span className="text-sm font-semibold text-[#365A7B]">{isShareSettingsOpen ? "Masquer" : "Afficher"}</span>
+          </button>
+
+          {isShareSettingsOpen && (
+            <div className="mt-3 space-y-3">
+              {CATEGORIES.map((categoryName) => {
+                const parent1Pct = clampPercentage(shareRules[categoryName] ?? 50);
+                const parent2Pct = clampPercentage(100 - parent1Pct);
+
+                return (
+                  <div key={categoryName} className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+                    <p className="text-sm font-semibold text-[#17324D]">{categoryName}</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <label className="text-xs font-medium text-[#5E7A95]">
+                        Parent 1 (%)
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={parent1Pct}
+                          onChange={(event) => onChangeParent1Share(categoryName, event.target.value)}
+                          className="mt-1 w-full rounded-xl border border-[#D8E4F0] px-3 py-2 text-sm text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                        />
+                      </label>
+                      <label className="text-xs font-medium text-[#5E7A95]">
+                        Parent 2 (%)
+                        <input
+                          type="number"
+                          value={parent2Pct}
+                          readOnly
+                          className="mt-1 w-full rounded-xl border border-[#D8E4F0] bg-[#F2F7FD] px-3 py-2 text-sm text-[#1D3145]"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={onSaveShareRules}
+                disabled={isSavingShareRules}
+                className="w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isSavingShareRules ? "Sauvegarde..." : "Sauvegarder l'entente de partage"}
+              </button>
+            </div>
+          )}
+        </section>
 
         <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
           <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">FORMULAIRE D'AJOUT</p>
@@ -1116,6 +1330,9 @@ export default function ExpensesPage() {
                       <p className="mt-1 text-sm font-medium text-[#2D4B68]">{expense.description}</p>
                       <p className="mt-1 text-xs text-[#5E7A95]">
                         {expense.category} · {new Date(expense.expenseDate).toLocaleDateString("fr-CA")}
+                      </p>
+                      <p className="mt-1 text-xs font-medium text-[#365A7B]">
+                        Parent 1 doit {formatCurrency(expense.parent1ShareAmount ?? expense.amount / 2)}$ | Parent 2 doit {formatCurrency(expense.parent2ShareAmount ?? expense.amount / 2)}$
                       </p>
                     </div>
 
