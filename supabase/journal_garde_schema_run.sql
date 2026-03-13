@@ -19,6 +19,8 @@ alter table if exists public.journal_garde add column if not exists created_at t
 create index if not exists journal_garde_date_idx on public.journal_garde(garde_date);
 create index if not exists journal_garde_parent_role_idx on public.journal_garde(parent_role);
 
+grant select, insert, update, delete on table public.journal_garde to authenticated;
+
 alter table public.journal_garde enable row level security;
 
 drop policy if exists "journal_garde_select_authenticated" on public.journal_garde;

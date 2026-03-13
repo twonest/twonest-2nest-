@@ -928,37 +928,36 @@ export default function CalendarPage() {
       return;
     }
 
+    if (editingJournalStartDate !== editingJournalEndDate) {
+      setJournalEditError("Pour modifier une entrée unique, la date début et la date fin doivent être identiques.");
+      return;
+    }
+
     setIsSavingJournalEdit(true);
     setJournalEditError("");
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const gardeDays = listDateKeysBetween(startDate, endDate);
-
-      const { error: deleteError } = await supabase.from("journal_garde").delete().eq("id", editingJournalId);
-      if (deleteError) {
-        setJournalEditError(deleteError.message);
-        return;
-      }
-
-      const rows = gardeDays.map((day) => ({
-        event_id: editingJournalEventId,
-        garde_date: day,
-        parent_role: editingJournalParentRole,
-        title: editingJournalNotes.trim() || "Garde",
-      }));
-
-      const { error } = await supabase.from("journal_garde").upsert(rows, { onConflict: "event_id,garde_date" });
+      const { error } = await supabase
+        .from("journal_garde")
+        .update({
+          event_id: editingJournalEventId,
+          garde_date: editingJournalStartDate,
+          parent_role: editingJournalParentRole,
+          title: editingJournalNotes.trim() || "Garde",
+        })
+        .eq("id", editingJournalId);
 
       if (error) {
-        const fallbackRows = gardeDays.map((day) => ({
-          event_id: editingJournalEventId,
-          guard_day: day,
-          parent: editingJournalParentRole,
-          title: editingJournalNotes.trim() || "Garde",
-        }));
-
-        const fallback = await supabase.from("journal_garde").upsert(fallbackRows, { onConflict: "event_id,guard_day" });
+        const fallback = await supabase
+          .from("journal_garde")
+          .update({
+            event_id: editingJournalEventId,
+            guard_day: editingJournalStartDate,
+            parent: editingJournalParentRole,
+            title: editingJournalNotes.trim() || "Garde",
+          })
+          .eq("id", editingJournalId);
 
         if (fallback.error) {
           setJournalEditError(fallback.error.message);
@@ -978,6 +977,11 @@ export default function CalendarPage() {
 
   const onDeleteJournalEntry = async () => {
     if (!editingJournalId) {
+      return;
+    }
+
+    const confirmed = window.confirm("Confirmer la suppression de cette entrée du journal de garde ?");
+    if (!confirmed) {
       return;
     }
 
@@ -2022,7 +2026,7 @@ export default function CalendarPage() {
                   disabled={isSavingJournalEdit || isDeletingJournalEntry}
                   className="flex-1 rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  {isSavingJournalEdit ? "Sauvegarde..." : "💾 Sauvegarder les modifications"}
+                  {isSavingJournalEdit ? "Sauvegarde..." : "💾 Sauvegarder"}
                 </button>
                 <button
                   type="button"
@@ -2030,7 +2034,7 @@ export default function CalendarPage() {
                   disabled={isSavingJournalEdit || isDeletingJournalEntry}
                   className="flex-1 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm font-semibold text-[#8D3E45] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  {isDeletingJournalEntry ? "Suppression..." : "🗑️ Supprimer cette entrée"}
+                  {isDeletingJournalEntry ? "Suppression..." : "🗑️ Supprimer"}
                 </button>
               </div>
             </form>
