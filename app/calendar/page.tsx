@@ -1098,65 +1098,143 @@ export default function CalendarPage() {
     const doc = new jsPDF();
     const monthLabel = formatMonthLabel(calendarDate);
     const fileName = `calendrier-2nest-${toMonthValue(calendarDate)}.pdf`;
-    let y = 18;
-
-    doc.setFontSize(18);
-    doc.text(`Calendrier 2nest - ${monthLabel}`, 14, y);
-
-    y += 9;
-    doc.setFontSize(11);
-    doc.text(`Jours de garde (mois): Parent 1 = ${monthCounts.parent1} | Parent 2 = ${monthCounts.parent2}`, 14, y);
-
-    y += 9;
-    doc.setFontSize(13);
-    doc.text("Événements du mois", 14, y);
-    y += 6;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const contentWidth = pageWidth - 28;
+    const left = 14;
+    const right = pageWidth - 14;
+    const monthKey = toMonthValue(calendarDate);
 
     const monthEvents = events
-      .filter((eventItem) => toMonthValue(eventItem.start) === toMonthValue(calendarDate))
+      .filter((eventItem) => toMonthValue(eventItem.start) === monthKey)
       .sort((a, b) => a.start.getTime() - b.start.getTime());
-
-    doc.setFontSize(10);
-    if (monthEvents.length === 0) {
-      doc.text("- Aucun événement.", 14, y);
-      y += 6;
-    } else {
-      for (const eventItem of monthEvents) {
-        doc.text(
-          `- ${eventItem.start.toLocaleDateString("fr-CA")} ${eventItem.title} (${eventItem.type})`,
-          14,
-          y,
-        );
-        y += 6;
-        if (y > 270) {
-          doc.addPage();
-          y = 18;
-        }
-      }
-    }
-
-    y += 4;
-    doc.setFontSize(13);
-    doc.text("Jours spéciaux du mois", 14, y);
-    y += 6;
-    doc.setFontSize(10);
 
     const monthSpecialDays = specialDays
       .filter((item) => item.date.startsWith(`${calendarDate.getFullYear()}-${`${calendarDate.getMonth() + 1}`.padStart(2, "0")}`))
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    if (monthSpecialDays.length === 0) {
-      doc.text("- Aucun jour spécial.", 14, y);
-    } else {
-      for (const item of monthSpecialDays) {
-        doc.text(`- ${formatDateLabel(item.date)} ${item.title} (${specialTypeConfig[item.type].label})`, 14, y);
-        y += 6;
-        if (y > 270) {
-          doc.addPage();
-          y = 18;
-        }
+    const monthGuardByParent = { parent1: 0, parent2: 0 };
+    for (const eventItem of monthEvents) {
+      if (eventItem.type !== "Garde") {
+        continue;
+      }
+      if (normalizeParentRole(eventItem.parent) === "parent1") {
+        monthGuardByParent.parent1 += 1;
+      } else {
+        monthGuardByParent.parent2 += 1;
       }
     }
+
+    let y = 18;
+
+    const ensurePageSpace = (required = 8) => {
+      if (y + required <= 280) {
+        return;
+      }
+      doc.addPage();
+      y = 18;
+    };
+
+    const addSectionTitle = (value: string) => {
+      ensurePageSpace(10);
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text(value, left, y);
+      y += 7;
+      doc.setFont("helvetica", "normal");
+    };
+
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Calendrier 2nest - ${monthLabel}`, 14, y);
+
+    y += 8;
+    doc.setLineWidth(0.3);
+    doc.line(left, y, right, y);
+
+    y += 7;
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Période: ${monthLabel}`, left, y);
+    y += 6;
+    doc.text(`Événements total (mois): ${monthEvents.length}`, left, y);
+    y += 6;
+    doc.text(`Jours spéciaux (mois): ${monthSpecialDays.length}`, left, y);
+
+    addSectionTitle("Résumé de garde");
+    doc.setFontSize(11);
+    doc.text(`Jours de garde ce mois: Parent 1 = ${monthCounts.parent1} | Parent 2 = ${monthCounts.parent2}`, left, y);
+    y += 6;
+    doc.text(`Jours de garde cette année: Parent 1 = ${yearCounts.parent1} | Parent 2 = ${yearCounts.parent2}`, left, y);
+    y += 6;
+    doc.text(`Événements "Garde" du mois: Parent 1 = ${monthGuardByParent.parent1} | Parent 2 = ${monthGuardByParent.parent2}`, left, y);
+
+    addSectionTitle("Événements du mois");
+
+    ensurePageSpace(10);
+    doc.setFillColor(241, 247, 253);
+    doc.rect(left, y, contentWidth, 8, "F");
+    doc.rect(left, y, contentWidth, 8);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.text("Date", left + 2, y + 5.5);
+    doc.text("Titre", left + 34, y + 5.5);
+    doc.text("Type", right - 42, y + 5.5);
+    y += 8;
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    if (monthEvents.length === 0) {
+      doc.text("Aucun événement.", left + 2, y + 5.5);
+      doc.rect(left, y, contentWidth, 8);
+      y += 6;
+    } else {
+      for (const eventItem of monthEvents) {
+        ensurePageSpace(10);
+        doc.rect(left, y, contentWidth, 8);
+        const dateLabel = `${eventItem.start.toLocaleDateString("fr-CA")}`;
+        const titleLabel = eventItem.title.length > 32 ? `${eventItem.title.slice(0, 32)}…` : eventItem.title;
+        doc.text(dateLabel, left + 2, y + 5.5);
+        doc.text(titleLabel, left + 34, y + 5.5);
+        doc.text(eventItem.type, right - 42, y + 5.5);
+        y += 8;
+      }
+    }
+
+    addSectionTitle("Jours spéciaux du mois");
+    ensurePageSpace(10);
+    doc.setFillColor(241, 247, 253);
+    doc.rect(left, y, contentWidth, 8, "F");
+    doc.rect(left, y, contentWidth, 8);
+    doc.setFont("helvetica", "bold");
+    doc.text("Date", left + 2, y + 5.5);
+    doc.text("Titre", left + 34, y + 5.5);
+    doc.text("Type", right - 52, y + 5.5);
+    y += 8;
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+
+    if (monthSpecialDays.length === 0) {
+      doc.text("Aucun jour spécial.", left + 2, y + 5.5);
+      doc.rect(left, y, contentWidth, 8);
+    } else {
+      for (const item of monthSpecialDays) {
+        ensurePageSpace(10);
+        doc.rect(left, y, contentWidth, 8);
+        const titleLabel = item.title.length > 32 ? `${item.title.slice(0, 32)}…` : item.title;
+        doc.text(formatDateLabel(item.date), left + 2, y + 5.5);
+        doc.text(titleLabel, left + 34, y + 5.5);
+        doc.text(specialTypeConfig[item.type].label, right - 52, y + 5.5);
+        y += 8;
+      }
+    }
+
+    ensurePageSpace(10);
+    y += 6;
+    doc.setFontSize(9);
+    doc.setTextColor(94, 122, 149);
+    doc.text(`Document généré le ${new Date().toLocaleDateString("fr-CA")}`, left, y);
+    doc.setTextColor(0, 0, 0);
 
     doc.save(fileName);
     setToast({ message: "PDF du calendrier exporté.", variant: "success" });
