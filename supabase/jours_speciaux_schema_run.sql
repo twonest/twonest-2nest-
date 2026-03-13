@@ -3,6 +3,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.jours_speciaux (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id) on delete set null,
+  family_id uuid,
   title text not null,
   date date not null,
   type text not null default 'ferie' check (type in ('ferie','pedagogique','vacances','scolaire')),
@@ -12,6 +13,7 @@ create table if not exists public.jours_speciaux (
 );
 
 alter table if exists public.jours_speciaux add column if not exists user_id uuid references auth.users(id) on delete set null;
+alter table if exists public.jours_speciaux add column if not exists family_id uuid;
 alter table if exists public.jours_speciaux add column if not exists title text;
 alter table if exists public.jours_speciaux add column if not exists date date;
 alter table if exists public.jours_speciaux add column if not exists type text;
@@ -21,6 +23,7 @@ alter table if exists public.jours_speciaux add column if not exists updated_at 
 
 create index if not exists jours_speciaux_date_idx on public.jours_speciaux(date);
 create index if not exists jours_speciaux_type_idx on public.jours_speciaux(type);
+create index if not exists jours_speciaux_family_id_idx on public.jours_speciaux(family_id);
 
 create or replace function public.set_jours_speciaux_updated_at()
 returns trigger
@@ -76,3 +79,51 @@ values
   ('Fête du Canada', make_date(extract(year from now())::int, 7, 1), 'ferie', null),
   ('Noël', make_date(extract(year from now())::int, 12, 25), 'ferie', null)
 on conflict do nothing;
+
+insert into storage.buckets (id, name, public)
+values ('school-calendars', 'school-calendars', false)
+on conflict (id) do nothing;
+
+drop policy if exists "school_calendars_select_own" on storage.objects;
+create policy "school_calendars_select_own"
+on storage.objects
+for select
+to authenticated
+using (
+  bucket_id = 'school-calendars'
+  and split_part(name, '/', 1) = auth.uid()::text
+);
+
+drop policy if exists "school_calendars_insert_own" on storage.objects;
+create policy "school_calendars_insert_own"
+on storage.objects
+for insert
+to authenticated
+with check (
+  bucket_id = 'school-calendars'
+  and split_part(name, '/', 1) = auth.uid()::text
+);
+
+drop policy if exists "school_calendars_update_own" on storage.objects;
+create policy "school_calendars_update_own"
+on storage.objects
+for update
+to authenticated
+using (
+  bucket_id = 'school-calendars'
+  and split_part(name, '/', 1) = auth.uid()::text
+)
+with check (
+  bucket_id = 'school-calendars'
+  and split_part(name, '/', 1) = auth.uid()::text
+);
+
+drop policy if exists "school_calendars_delete_own" on storage.objects;
+create policy "school_calendars_delete_own"
+on storage.objects
+for delete
+to authenticated
+using (
+  bucket_id = 'school-calendars'
+  and split_part(name, '/', 1) = auth.uid()::text
+);

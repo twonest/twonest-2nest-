@@ -31,12 +31,31 @@ export type SpecialDayRow = {
   date?: string;
   type?: string;
   notes?: string;
+  family_id?: string;
+};
+
+type SpecialDayInsertPayload = {
+  title: string;
+  date: string;
+  type: SpecialDayType;
+  notes: string | null;
+  user_id: string;
+  family_id?: string;
 };
 
 function throwIfError(error: { message: string } | null): void {
   if (error) {
     throw new Error(error.message);
   }
+}
+
+function isMissingFamilyIdColumnError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  const isMissingColumn =
+    (normalized.includes("column") && normalized.includes("does not exist")) ||
+    (normalized.includes("could not find") && normalized.includes("schema cache"));
+
+  return isMissingColumn && normalized.includes("family_id");
 }
 
 export async function fetchEvents(client: SupabaseClient, userId?: string): Promise<EventRow[]> {
@@ -132,14 +151,37 @@ export async function fetchSpecialDays(client: SupabaseClient): Promise<SpecialD
 
 export async function createSpecialDay(
   client: SupabaseClient,
-  payload: {
-    title: string;
-    date: string;
-    type: SpecialDayType;
-    notes: string | null;
-    user_id: string;
-  },
+  payload: SpecialDayInsertPayload,
 ): Promise<void> {
   const { error } = await client.from("jours_speciaux").insert(payload);
+
+  if (error && payload.family_id && isMissingFamilyIdColumnError(error.message)) {
+    const { family_id: _ignoredFamilyId, ...fallbackPayload } = payload;
+    const fallback = await client.from("jours_speciaux").insert(fallbackPayload);
+    throwIfError(fallback.error);
+    return;
+  }
+
   throwIfError(error);
+}
+
+export async function createSpecialDaysBulk(
+  client: SupabaseClient,
+  payloads: SpecialDayInsertPayload[],
+): Promise<number> {
+  if (payloads.length === 0) {
+    return 0;
+  }
+
+  const { error, count } = await client.from("jours_speciaux").insert(payloads, { count: "exact" });
+
+  if (error && payloads.some((payload) => payload.family_id) && isMissingFamilyIdColumnError(error.message)) {
+    const fallbackPayloads = payloads.map(({ family_id: _ignoredFamilyId, ...payload }) => payload);
+    const fallback = await client.from("jours_speciaux").insert(fallbackPayloads, { count: "exact" });
+    throwIfError(fallback.error);
+    return fallback.count ?? fallbackPayloads.length;
+  }
+
+  throwIfError(error);
+  return count ?? payloads.length;
 }

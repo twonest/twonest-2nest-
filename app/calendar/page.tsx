@@ -4,7 +4,7 @@ import Link from "next/link";
 import jsPDF from "jspdf";
 import moment from "moment";
 import "moment/locale/fr";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Calendar, momentLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
@@ -12,6 +12,7 @@ import type { User } from "@supabase/supabase-js";
 import {
   createEvent,
   createSpecialDay,
+  createSpecialDaysBulk,
   createSwapRequest,
   deleteEvent,
   fetchEvents,
@@ -109,6 +110,18 @@ type SupabaseGuardScheduleRow = {
 type ToastState = {
   message: string;
   variant: "success";
+};
+
+type ImportedSchoolDate = {
+  id: string;
+  date: string;
+  description: string;
+  type: SpecialDayType;
+};
+
+type SchoolCalendarExtractResponse = {
+  dates?: ImportedSchoolDate[];
+  error?: string;
 };
 
 type DecisionType = "accept" | "refuse";
@@ -397,6 +410,14 @@ export default function CalendarPage() {
   const [specialDayType, setSpecialDayType] = useState<SpecialDayType>("ferie");
   const [specialDayNotes, setSpecialDayNotes] = useState("");
   const [isCreatingSpecialDay, setIsCreatingSpecialDay] = useState(false);
+  const [schoolImportOpen, setSchoolImportOpen] = useState(false);
+  const [schoolImportError, setSchoolImportError] = useState("");
+  const [isUploadingSchoolPdf, setIsUploadingSchoolPdf] = useState(false);
+  const [isImportingSchoolDates, setIsImportingSchoolDates] = useState(false);
+  const [detectedSchoolDates, setDetectedSchoolDates] = useState<ImportedSchoolDate[]>([]);
+  const [selectedSchoolDateIds, setSelectedSchoolDateIds] = useState<Record<string, boolean>>({});
+  const [schoolPdfName, setSchoolPdfName] = useState("");
+  const [currentFamilyId, setCurrentFamilyId] = useState<string | null>(null);
   const [isSavingJournalEdit, setIsSavingJournalEdit] = useState(false);
   const [isDeletingJournalEntry, setIsDeletingJournalEntry] = useState(false);
   const [isApplyingSchedule, setIsApplyingSchedule] = useState(false);
@@ -551,6 +572,17 @@ export default function CalendarPage() {
     }
   };
 
+  const resolveCurrentFamilyId = async (client: ReturnType<typeof getSupabaseBrowserClient>, userId: string): Promise<string> => {
+    const byUserId = await client.from("profiles").select("*").eq("user_id", userId).maybeSingle();
+    const byId = byUserId.error || !byUserId.data
+      ? await client.from("profiles").select("*").eq("id", userId).maybeSingle()
+      : null;
+
+    const row = (byUserId.data ?? byId?.data ?? null) as Record<string, unknown> | null;
+    const candidate = row?.family_id;
+    return typeof candidate === "string" && candidate.trim().length > 0 ? candidate : userId;
+  };
+
   const syncJournalForEvent = async (
     eventId: string,
     eventTypeValue: EventType,
@@ -672,6 +704,8 @@ export default function CalendarPage() {
 
       const profileRoleRaw = await fetchProfileRole(supabase, userData.user.id);
       setProfileRole(normalizeParentRole(profileRoleRaw));
+      const familyId = await resolveCurrentFamilyId(supabase, userData.user.id);
+      setCurrentFamilyId(familyId);
 
       await Promise.all([
         refreshEvents(supabase, userData.user.id),
@@ -1269,6 +1303,10 @@ export default function CalendarPage() {
   }, [journalYearEntries]);
 
   const maxMonthCount = Math.max(monthCounts.parent1, monthCounts.parent2, 1);
+  const selectedSchoolDatesCount = useMemo(
+    () => detectedSchoolDates.filter((item) => selectedSchoolDateIds[item.id]).length,
+    [detectedSchoolDates, selectedSchoolDateIds],
+  );
 
   const getGuardEventForDate = (date: Date): CalendarEvent | null => {
     const selectedDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -1318,6 +1356,137 @@ export default function CalendarPage() {
       setSpecialDayError(error instanceof Error ? error.message : "Erreur pendant l'ajout du jour spécial.");
     } finally {
       setIsCreatingSpecialDay(false);
+    }
+  };
+
+  const openSchoolImportModal = () => {
+    setSchoolImportError("");
+    setDetectedSchoolDates([]);
+    setSelectedSchoolDateIds({});
+    setSchoolPdfName("");
+    setSchoolImportOpen(true);
+  };
+
+  const closeSchoolImportModal = () => {
+    if (isUploadingSchoolPdf || isImportingSchoolDates) {
+      return;
+    }
+    setSchoolImportOpen(false);
+    setSchoolImportError("");
+    setDetectedSchoolDates([]);
+    setSelectedSchoolDateIds({});
+    setSchoolPdfName("");
+  };
+
+  const onUploadSchoolCalendarPdf = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file || !user) {
+      return;
+    }
+
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      setSchoolImportError("Veuillez déposer un fichier PDF.");
+      return;
+    }
+
+    setIsUploadingSchoolPdf(true);
+    setSchoolImportError("");
+    setDetectedSchoolDates([]);
+    setSelectedSchoolDateIds({});
+    setSchoolPdfName(file.name);
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const filePath = `${user.id}/${Date.now()}-${sanitizedName}`;
+
+      const uploadResult = await supabase.storage.from("school-calendars").upload(filePath, file, { upsert: true });
+      if (uploadResult.error) {
+        setSchoolImportError(`${uploadResult.error.message}. Vérifie que le bucket 'school-calendars' existe.`);
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/calendar/extract-school-calendar", {
+        method: "POST",
+        body: formData,
+      });
+
+      const payload = (await response.json()) as SchoolCalendarExtractResponse;
+      if (!response.ok) {
+        setSchoolImportError(payload.error ?? "Impossible d'analyser le PDF.");
+        return;
+      }
+
+      const detected = Array.isArray(payload.dates) ? payload.dates : [];
+      if (detected.length === 0) {
+        setSchoolImportError("Aucune date scolaire détectée dans ce PDF.");
+        return;
+      }
+
+      const selectedMap = detected.reduce<Record<string, boolean>>((accumulator, item) => {
+        accumulator[item.id] = true;
+        return accumulator;
+      }, {});
+
+      setDetectedSchoolDates(detected);
+      setSelectedSchoolDateIds(selectedMap);
+    } catch (error) {
+      setSchoolImportError(error instanceof Error ? error.message : "Erreur pendant l'import du PDF.");
+    } finally {
+      setIsUploadingSchoolPdf(false);
+    }
+  };
+
+  const toggleSchoolDateSelection = (id: string) => {
+    setSelectedSchoolDateIds((current) => ({
+      ...current,
+      [id]: !current[id],
+    }));
+  };
+
+  const onImportSelectedSchoolDates = async () => {
+    if (!user) {
+      setSchoolImportError("Session invalide.");
+      return;
+    }
+
+    const selectedRows = detectedSchoolDates.filter((item) => selectedSchoolDateIds[item.id]);
+    if (selectedRows.length === 0) {
+      setSchoolImportError("Sélectionnez au moins une date à importer.");
+      return;
+    }
+
+    setIsImportingSchoolDates(true);
+    setSchoolImportError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const familyId = currentFamilyId ?? user.id;
+      const rows = selectedRows.map((item) => ({
+        title: item.description,
+        date: item.date,
+        type: item.type,
+        notes: schoolPdfName ? `Importé depuis ${schoolPdfName}` : "Importé depuis calendrier scolaire",
+        user_id: user.id,
+        family_id: familyId,
+      }));
+
+      const importedCount = await createSpecialDaysBulk(supabase, rows);
+      await refreshSpecialDays(supabase);
+      setSchoolImportOpen(false);
+      setDetectedSchoolDates([]);
+      setSelectedSchoolDateIds({});
+      setSchoolPdfName("");
+      setToast({ message: `✅ ${importedCount} dates importées dans votre calendrier !`, variant: "success" });
+    } catch (error) {
+      setSchoolImportError(error instanceof Error ? error.message : "Erreur pendant l'import des dates.");
+    } finally {
+      setIsImportingSchoolDates(false);
     }
   };
 
@@ -1726,6 +1895,13 @@ export default function CalendarPage() {
                 className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
               >
                 ➕ Ajouter un jour spécial
+              </button>
+              <button
+                type="button"
+                onClick={openSchoolImportModal}
+                className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                📚 Importer calendrier scolaire
               </button>
               <button
                 type="button"
@@ -2596,6 +2772,105 @@ export default function CalendarPage() {
                 {isApplyingSchedule ? "Application..." : "🔄 Appliquer au calendrier"}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {schoolImportOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h2 className="text-xl font-semibold text-[#17324D]">📚 Importer calendrier scolaire</h2>
+              <button
+                type="button"
+                onClick={closeSchoolImportModal}
+                disabled={isUploadingSchoolPdf || isImportingSchoolDates}
+                className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                ✕
+              </button>
+            </div>
+
+            {schoolImportError && (
+              <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm text-[#8D3E45]">
+                {schoolImportError}
+              </p>
+            )}
+
+            <div className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] p-4">
+              <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-[#4A90D9] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105">
+                📎 Déposer le calendrier scolaire (PDF)
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={onUploadSchoolCalendarPdf}
+                  disabled={isUploadingSchoolPdf || isImportingSchoolDates}
+                  className="hidden"
+                />
+              </label>
+              {isUploadingSchoolPdf && <p className="mt-3 text-sm text-[#4A6783]">Analyse du PDF en cours...</p>}
+              {schoolPdfName && !isUploadingSchoolPdf && (
+                <p className="mt-3 text-sm text-[#4A6783]">Fichier analysé: {schoolPdfName}</p>
+              )}
+            </div>
+
+            {detectedSchoolDates.length > 0 && (
+              <div className="mt-4 rounded-xl border border-[#D7E6F4] bg-white p-4">
+                <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">DATES DÉTECTÉES</p>
+                <div className="mt-3 space-y-2">
+                  {detectedSchoolDates.map((item) => {
+                    const typeUi = specialTypeConfig[item.type];
+                    return (
+                      <label
+                        key={item.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E0EBF6] bg-[#FAFCFF] px-3 py-2"
+                      >
+                        <span className="flex items-center gap-2 text-sm text-[#2D4B68]">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(selectedSchoolDateIds[item.id])}
+                            onChange={() => toggleSchoolDateSelection(item.id)}
+                            className="h-4 w-4 rounded border-[#C6D9EC] text-[#4A90D9] focus:ring-[#4A90D9]/30"
+                          />
+                          <span>{formatDateLabel(item.date)}</span>
+                          <span>·</span>
+                          <span>{item.description}</span>
+                        </span>
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold"
+                          style={{ borderColor: typeUi.color, color: typeUi.color }}
+                        >
+                          <span>{typeUi.emoji}</span>
+                          <span>{typeUi.label}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-[#4A6783]">{selectedSchoolDatesCount} date(s) sélectionnée(s)</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={onImportSelectedSchoolDates}
+                      disabled={isImportingSchoolDates}
+                      className="rounded-xl bg-[#50C878] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isImportingSchoolDates ? "Import..." : "✅ Importer les dates sélectionnées"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={closeSchoolImportModal}
+                      disabled={isImportingSchoolDates}
+                      className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-2 text-sm font-semibold text-[#8D3E45] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      ❌ Annuler
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
