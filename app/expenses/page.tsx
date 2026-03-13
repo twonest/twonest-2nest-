@@ -241,6 +241,38 @@ async function normalizeReceiptUrl(
   return isReceiptFromBucket(publicUrl) ? publicUrl : null;
 }
 
+function findReceiptCandidateValue(row: SupabaseExpenseRow): string | null {
+  const explicitCandidates = [
+    row.receipt_url,
+    row.receipt_file_url,
+    row.receipt_path,
+    row.receipt,
+    row.justificatif_url,
+    row.file_url,
+    row.file_path,
+    row.attachment_url,
+  ];
+
+  for (const candidate of explicitCandidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+
+  const genericEntries = Object.entries(row as Record<string, unknown>);
+  for (const [key, value] of genericEntries) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      continue;
+    }
+
+    if (/(receipt|recu|justif|facture|preuve|piece|attachment|file|path|url)/i.test(key)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 function toDateOnlyValue(dateInput: string): string | null {
   const parsedDate = new Date(dateInput);
   if (Number.isNaN(parsedDate.getTime())) {
@@ -384,16 +416,7 @@ export default function ExpensesPage() {
           statusText === "remboursé" ||
           statusText === "reimbursed";
 
-        const rawReceiptUrl =
-          row.receipt_url ??
-          row.receipt_file_url ??
-          row.receipt_path ??
-          row.receipt ??
-          row.justificatif_url ??
-          row.file_url ??
-          row.file_path ??
-          row.attachment_url ??
-          null;
+        const rawReceiptUrl = findReceiptCandidateValue(row);
         const normalizedReceiptUrl = await normalizeReceiptUrl(rawReceiptUrl, client);
 
         return {
