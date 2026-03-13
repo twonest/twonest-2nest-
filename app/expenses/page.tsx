@@ -1187,42 +1187,82 @@ export default function ExpensesPage() {
   const onExportTaxReport = () => {
     const doc = new jsPDF();
     const fileName = `rapport-fiscal-2nest-${selectedYear}.pdf`;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const rightMargin = pageWidth - 14;
+    const tableLeft = 14;
+    const tableWidth = pageWidth - 28;
+    const headerHeight = 9;
+    const rowHeight = 8;
+    const col1 = tableLeft + 2;
+    const col2 = tableLeft + tableWidth * 0.6;
+    const col3 = tableLeft + tableWidth * 0.8;
     let y = 18;
 
     doc.setFontSize(18);
     doc.text(`Rapport fiscal 2nest ${selectedYear}`, 14, y);
 
-    y += 10;
+    y += 8;
+    doc.setLineWidth(0.3);
+    doc.line(14, y, rightMargin, y);
+
+    y += 8;
     doc.setFontSize(11);
     doc.text(`Parents: ${parentNames.parent1} et ${parentNames.parent2}`, 14, y);
-    y += 7;
+    y += 6;
     doc.text(`Année fiscale: ${selectedYear}`, 14, y);
 
     y += 10;
     doc.setFontSize(13);
     doc.text("Total par catégorie", 14, y);
 
-    y += 7;
-    doc.setFontSize(11);
+    y += 5;
+    doc.setFillColor(241, 247, 253);
+    doc.rect(tableLeft, y, tableWidth, headerHeight, "F");
+    doc.setDrawColor(208, 223, 238);
+    doc.rect(tableLeft, y, tableWidth, headerHeight);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.text("Catégorie", col1, y + 6);
+    doc.text("%", col2, y + 6);
+    doc.text("Montant", col3, y + 6);
+
+    y += headerHeight;
+    doc.setFont("helvetica", "normal");
     for (const categoryName of CATEGORIES) {
-      const value = annualCategoryData.find((item) => item.name === categoryName)?.value ?? 0;
-      doc.text(`- ${categoryName}: ${formatCurrency(value)}$`, 14, y);
+      const categoryValue = annualCategoryData.find((item) => item.name === categoryName)?.value ?? 0;
+      const categoryPct = annualTotals.total > 0 ? (categoryValue / annualTotals.total) * 100 : 0;
+
+      doc.rect(tableLeft, y, tableWidth, rowHeight);
+      doc.text(categoryName, col1, y + 5.5);
+      doc.text(`${categoryPct.toFixed(1)}%`, col2, y + 5.5);
+      doc.text(`${formatCurrency(categoryValue)}$`, col3, y + 5.5, { align: "left" });
+
+      y += rowHeight;
+    }
+
+    y += 10;
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text("Totaux annuels", 14, y);
+
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    const summaryLines = [
+      `Total des dépenses: ${formatCurrency(annualTotals.total)}$`,
+      `${parentNames.parent1} a payé: ${formatCurrency(annualTotals.paidByParent1)}$`,
+      `${parentNames.parent2} a payé: ${formatCurrency(annualTotals.paidByParent2)}$`,
+      `Solde final: ${annualBalanceText}`,
+    ];
+
+    for (const line of summaryLines) {
+      doc.text(line, 14, y);
       y += 6;
     }
 
     y += 4;
-    doc.setFontSize(13);
-    doc.text("Totaux annuels", 14, y);
-
-    y += 7;
-    doc.setFontSize(11);
-    doc.text(`Total des dépenses: ${formatCurrency(annualTotals.total)}$`, 14, y);
-    y += 6;
-    doc.text(`${parentNames.parent1} a payé: ${formatCurrency(annualTotals.paidByParent1)}$`, 14, y);
-    y += 6;
-    doc.text(`${parentNames.parent2} a payé: ${formatCurrency(annualTotals.paidByParent2)}$`, 14, y);
-    y += 6;
-    doc.text(`Solde final: ${annualBalanceText}`, 14, y);
+    doc.setFontSize(9);
+    doc.setTextColor(94, 122, 149);
+    doc.text(`Document généré le ${new Date().toLocaleDateString("fr-CA")}`, 14, y);
 
     doc.save(fileName);
     setToast({ message: "Rapport fiscal PDF généré.", variant: "success" });
