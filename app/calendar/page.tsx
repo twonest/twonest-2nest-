@@ -342,6 +342,16 @@ function isEventsMissingColumnError(message: string, column: string): boolean {
   return normalized.includes("events") && normalized.includes(column.toLowerCase()) && missingColumnHint;
 }
 
+function isJournalMissingColumnError(message: string, column: string): boolean {
+  const normalized = message.toLowerCase();
+  const missingColumnHint =
+    normalized.includes("column") && normalized.includes("does not exist")
+      ? true
+      : normalized.includes("could not find") && normalized.includes("schema cache");
+
+  return normalized.includes("journal_garde") && normalized.includes(column.toLowerCase()) && missingColumnHint;
+}
+
 function toUtcDayMs(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -541,8 +551,8 @@ export default function CalendarPage() {
     const mapped = (data as SupabaseJournalGardeRow[])
       .map((row): JournalGardeEntry | null => {
         const gardeDate = row.garde_date ?? row.guard_day ?? row.date;
-        const eventId = row.event_id ? String(row.event_id) : "";
-        if (!row.id || !gardeDate || !eventId) {
+        const eventId = row.event_id ? String(row.event_id) : row.id ? `legacy-${String(row.id)}` : "";
+        if (!row.id || !gardeDate) {
           return null;
         }
 
@@ -602,7 +612,10 @@ export default function CalendarPage() {
     eventTitle: string,
     client = getSupabaseBrowserClient(),
   ) => {
-    await client.from("journal_garde").delete().eq("event_id", eventId);
+    const deleteResult = await client.from("journal_garde").delete().eq("event_id", eventId);
+    if (deleteResult.error && !isJournalMissingColumnError(deleteResult.error.message, "event_id")) {
+      return;
+    }
 
     if (eventTypeValue !== "Garde") {
       return;
@@ -622,7 +635,7 @@ export default function CalendarPage() {
 
     const { error } = await client.from("journal_garde").insert(rows);
     if (error) {
-      await client.from("journal_garde").insert(
+      const fallbackWithEventId = await client.from("journal_garde").insert(
         gardeDays.map((day) => ({
           event_id: eventId,
           guard_day: day,
@@ -630,6 +643,16 @@ export default function CalendarPage() {
           title: eventTitle,
         })),
       );
+
+      if (fallbackWithEventId.error && isJournalMissingColumnError(fallbackWithEventId.error.message, "event_id")) {
+        await client.from("journal_garde").insert(
+          gardeDays.map((day) => ({
+            garde_date: day,
+            parent_role: parentRole,
+            title: eventTitle,
+          })),
+        );
+      }
     }
   };
 
@@ -1031,7 +1054,11 @@ export default function CalendarPage() {
         return;
       }
 
-      await supabase.from("journal_garde").delete().eq("event_id", editingEventId);
+      const journalDelete = await supabase.from("journal_garde").delete().eq("event_id", editingEventId);
+      if (journalDelete.error && !isJournalMissingColumnError(journalDelete.error.message, "event_id")) {
+        setEditError(journalDelete.error.message);
+        return;
+      }
       await refreshJournalEntries(supabase);
 
       await refreshEvents();
@@ -1137,6 +1164,24 @@ export default function CalendarPage() {
         .eq("id", editingJournalId);
 
       if (error) {
+        if (isJournalMissingColumnError(error.message, "event_id")) {
+          const legacyWithoutEventId = await supabase
+            .from("journal_garde")
+            .update({
+              garde_date: editingJournalStartDate,
+              parent_role: editingJournalParentRole,
+              title: editingJournalNotes.trim() || "Garde",
+            })
+            .eq("id", editingJournalId);
+
+          if (!legacyWithoutEventId.error) {
+            await refreshJournalEntries(supabase);
+            closeJournalEditForm();
+            setToast({ message: "Entrée du journal modifiée.", variant: "success" });
+            return;
+          }
+        }
+
         const fallback = await supabase
           .from("journal_garde")
           .update({
@@ -1519,7 +1564,11 @@ export default function CalendarPage() {
         .filter((value) => value.length > 0);
 
       if (existingEventIds.length > 0) {
-        await supabase.from("journal_garde").delete().in("event_id", existingEventIds);
+        const cleanupByEvent = await supabase.from("journal_garde").delete().in("event_id", existingEventIds);
+        if (cleanupByEvent.error && !isJournalMissingColumnError(cleanupByEvent.error.message, "event_id")) {
+          setScheduleError(cleanupByEvent.error.message);
+          return;
+        }
         await supabase.from("events").delete().in("id", existingEventIds);
       }
 
@@ -1652,8 +1701,22 @@ export default function CalendarPage() {
             .upsert(fallbackJournalRows, { onConflict: "event_id,guard_day" });
 
           if (fallbackJournalInsert.error) {
-            setScheduleError(fallbackJournalInsert.error.message);
-            return;
+            if (isJournalMissingColumnError(fallbackJournalInsert.error.message, "event_id")) {
+              const legacyRowsNoEventId = journalRows.map((row) => ({
+                garde_date: row.garde_date,
+                parent_role: row.parent_role,
+                title: row.title,
+              }));
+
+              const legacyInsert = await supabase.from("journal_garde").insert(legacyRowsNoEventId);
+              if (legacyInsert.error) {
+                setScheduleError(legacyInsert.error.message);
+                return;
+              }
+            } else {
+              setScheduleError(fallbackJournalInsert.error.message);
+              return;
+            }
           }
         }
       }
