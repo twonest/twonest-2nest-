@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import jsPDF from "jspdf";
 import moment from "moment";
 import "moment/locale/fr";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -11,16 +12,41 @@ import type { User } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type EventType = "Garde" | "Médecin" | "École" | "Activité";
+type ParentRole = "parent1" | "parent2";
+type SpecialDayType = "ferie" | "pedagogique" | "vacances" | "scolaire";
 
 type CalendarEvent = {
   id: string;
   title: string;
   start: Date;
   end: Date;
+  allDay?: boolean;
+  kind: "event";
   type: EventType;
   ownerUserId: string | null;
   parent: string | null;
 };
+
+type SpecialDay = {
+  id: string;
+  title: string;
+  date: string;
+  type: SpecialDayType;
+  notes: string | null;
+};
+
+type CalendarSpecialDayEvent = {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date;
+  allDay: true;
+  kind: "special";
+  specialType: SpecialDayType;
+  notes: string | null;
+};
+
+type CalendarDisplayEvent = CalendarEvent | CalendarSpecialDayEvent;
 
 type SupabaseEventRow = {
   id?: string | number;
@@ -36,6 +62,37 @@ type SupabaseEventRow = {
   owner_id?: string;
   parent?: string;
   parent_role?: string;
+};
+
+type SupabaseJournalGardeRow = {
+  id?: string | number;
+  event_id?: string | number;
+  garde_date?: string;
+  guard_day?: string;
+  date?: string;
+  parent_role?: string;
+  parent?: string;
+  title?: string;
+};
+
+type JournalGardeEntry = {
+  id: string;
+  eventId: string;
+  gardeDate: string;
+  parentRole: ParentRole;
+  title: string;
+};
+
+type SupabaseSpecialDayRow = {
+  id?: string | number;
+  title?: string;
+  name?: string;
+  date?: string;
+  day_date?: string;
+  type?: string;
+  kind?: string;
+  notes?: string;
+  note?: string;
 };
 
 type SwapStatus = "pending" | "accepted" | "refused";
@@ -79,6 +136,12 @@ type DecisionType = "accept" | "refuse";
 
 const localizer = momentLocalizer(moment);
 const EVENT_TYPES: EventType[] = ["Garde", "Médecin", "École", "Activité"];
+const SPECIAL_DAY_OPTIONS: Array<{ value: SpecialDayType; label: string; emoji: string; color: string }> = [
+  { value: "ferie", label: "Jour férié", emoji: "🔴", color: "#D94A4A" },
+  { value: "pedagogique", label: "Congé pédagogique", emoji: "🟡", color: "#D9A74A" },
+  { value: "vacances", label: "Vacances scolaires", emoji: "🟢", color: "#50C878" },
+  { value: "scolaire", label: "Événement scolaire", emoji: "🔵", color: "#4A90D9" },
+];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
 
 function formatForDateTimeLocal(date: Date): string {
@@ -134,6 +197,45 @@ function fromMonthValue(monthValue: string): Date | null {
   return new Date(year, month - 1, 1);
 }
 
+function normalizeParentRole(value: string | null | undefined): ParentRole {
+  const normalized = (value ?? "").toLowerCase();
+  return normalized.includes("2") ? "parent2" : "parent1";
+}
+
+function normalizeSpecialDayType(value: string | undefined): SpecialDayType {
+  const normalized = (value ?? "").toLowerCase();
+  if (normalized.includes("ferie") || normalized.includes("féri")) {
+    return "ferie";
+  }
+  if (normalized.includes("pedo") || normalized.includes("peda")) {
+    return "pedagogique";
+  }
+  if (normalized.includes("vacan")) {
+    return "vacances";
+  }
+  return "scolaire";
+}
+
+function toDateOnlyKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function listDateKeysBetween(start: Date, end: Date): string[] {
+  const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  const values: string[] = [];
+
+  while (current <= last) {
+    values.push(toDateOnlyKey(current));
+    current.setDate(current.getDate() + 1);
+  }
+
+  return values;
+}
+
 export default function CalendarPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -142,6 +244,8 @@ export default function CalendarPage() {
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+  const [journalEntries, setJournalEntries] = useState<JournalGardeEntry[]>([]);
+  const [specialDays, setSpecialDays] = useState<SpecialDay[]>([]);
   const [swapRequests, setSwapRequests] = useState<SwapRequest[]>([]);
   const [isLoadingSwapRequests, setIsLoadingSwapRequests] = useState(true);
 
@@ -155,11 +259,14 @@ export default function CalendarPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [swapFormOpen, setSwapFormOpen] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [specialDayFormOpen, setSpecialDayFormOpen] = useState(false);
 
   const [formError, setFormError] = useState("");
   const [editError, setEditError] = useState("");
   const [swapError, setSwapError] = useState("");
   const [decisionError, setDecisionError] = useState("");
+  const [specialDayError, setSpecialDayError] = useState("");
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const [title, setTitle] = useState("");
@@ -181,6 +288,13 @@ export default function CalendarPage() {
   const [decisionRequestId, setDecisionRequestId] = useState("");
   const [decisionReason, setDecisionReason] = useState("");
   const [calendarDate, setCalendarDate] = useState(() => new Date());
+  const [profileRole, setProfileRole] = useState<ParentRole>("parent1");
+
+  const [specialDayTitle, setSpecialDayTitle] = useState("");
+  const [specialDayDate, setSpecialDayDate] = useState(() => formatForDateInput(new Date()));
+  const [specialDayType, setSpecialDayType] = useState<SpecialDayType>("ferie");
+  const [specialDayNotes, setSpecialDayNotes] = useState("");
+  const [isCreatingSpecialDay, setIsCreatingSpecialDay] = useState(false);
 
   const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
 
@@ -247,6 +361,7 @@ export default function CalendarPage() {
         return {
           id: String(row.id),
           title: row.title,
+          kind: "event",
           type: row.type,
           start: startDate,
           end: endDate,
@@ -257,6 +372,114 @@ export default function CalendarPage() {
       .filter((event): event is CalendarEvent => event !== null);
 
     setEvents(mapped);
+  };
+
+  const refreshJournalEntries = async (client = getSupabaseBrowserClient()) => {
+    let { data, error } = await client.from("journal_garde").select("*").order("garde_date", { ascending: true });
+
+    if (error) {
+      const fallback = await client.from("journal_garde").select("*");
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error) {
+      return;
+    }
+
+    const mapped = (data as SupabaseJournalGardeRow[])
+      .map((row): JournalGardeEntry | null => {
+        const gardeDate = row.garde_date ?? row.guard_day ?? row.date;
+        const eventId = row.event_id ? String(row.event_id) : "";
+        if (!row.id || !gardeDate || !eventId) {
+          return null;
+        }
+
+        return {
+          id: String(row.id),
+          eventId,
+          gardeDate,
+          parentRole: normalizeParentRole(row.parent_role ?? row.parent),
+          title: row.title ?? "Garde",
+        };
+      })
+      .filter((entry): entry is JournalGardeEntry => entry !== null);
+
+    setJournalEntries(mapped);
+  };
+
+  const refreshSpecialDays = async (client = getSupabaseBrowserClient()) => {
+    let { data, error } = await client.from("jours_speciaux").select("*").order("date", { ascending: true });
+
+    if (error) {
+      const fallback = await client.from("jours_speciaux").select("*");
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error) {
+      return;
+    }
+
+    const mapped = (data as SupabaseSpecialDayRow[])
+      .map((row): SpecialDay | null => {
+        const date = row.date ?? row.day_date;
+        const title = row.title ?? row.name;
+        if (!row.id || !date || !title) {
+          return null;
+        }
+
+        return {
+          id: String(row.id),
+          title,
+          date,
+          type: normalizeSpecialDayType(row.type ?? row.kind),
+          notes: row.notes ?? row.note ?? null,
+        };
+      })
+      .filter((item): item is SpecialDay => item !== null);
+
+    setSpecialDays(mapped);
+  };
+
+  const syncJournalForEvent = async (
+    eventId: string,
+    eventTypeValue: EventType,
+    eventStart: Date,
+    eventEnd: Date,
+    parentRole: ParentRole,
+    eventTitle: string,
+    client = getSupabaseBrowserClient(),
+  ) => {
+    await client.from("journal_garde").delete().eq("event_id", eventId);
+
+    if (eventTypeValue !== "Garde") {
+      return;
+    }
+
+    const gardeDays = listDateKeysBetween(eventStart, eventEnd);
+    if (gardeDays.length === 0) {
+      return;
+    }
+
+    const rows = gardeDays.map((day) => ({
+      event_id: eventId,
+      garde_date: day,
+      parent_role: parentRole,
+      title: eventTitle,
+    }));
+
+    const { error } = await client.from("journal_garde").insert(rows);
+    if (error) {
+      await client.from("journal_garde").insert(
+        gardeDays.map((day) => ({
+          event_id: eventId,
+          guard_day: day,
+          parent: parentRole,
+          title: eventTitle,
+        })),
+      );
+    }
   };
 
   const refreshSwapRequests = async (client = getSupabaseBrowserClient()) => {
@@ -332,7 +555,20 @@ export default function CalendarPage() {
       setUser(userData.user);
       setCheckingSession(false);
 
-      await Promise.all([refreshEvents(supabase), refreshSwapRequests(supabase)]);
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("user_id", userData.user.id)
+        .maybeSingle();
+
+      setProfileRole(normalizeParentRole(profileData?.role));
+
+      await Promise.all([
+        refreshEvents(supabase),
+        refreshSwapRequests(supabase),
+        refreshJournalEntries(supabase),
+        refreshSpecialDays(supabase),
+      ]);
       setIsLoadingEvents(false);
       setIsLoadingSwapRequests(false);
     };
@@ -438,21 +674,42 @@ export default function CalendarPage() {
 
       const { error: insertError } = await supabase.from("events").insert({
         ...basePayload,
+        parent: profileRole,
         start_at: startDate.toISOString(),
         end_at: endDate.toISOString(),
-      });
+      }).select("id").maybeSingle();
 
-      if (insertError) {
-        const { error: fallbackError } = await supabase.from("events").insert({
+      let createdEventId: string | null = null;
+
+      if (!insertError) {
+        const { data: latest } = await supabase
+          .from("events")
+          .select("id")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        createdEventId = latest?.id ? String(latest.id) : null;
+      } else {
+        const { data: fallbackInserted, error: fallbackError } = await supabase.from("events").insert({
           ...basePayload,
+          parent: profileRole,
           start_date: startDate.toISOString(),
           end_date: endDate.toISOString(),
-        });
+        }).select("id").maybeSingle();
 
         if (fallbackError) {
           setFormError(fallbackError.message);
           return;
         }
+
+        createdEventId = fallbackInserted?.id ? String(fallbackInserted.id) : null;
+      }
+
+      if (createdEventId) {
+        await syncJournalForEvent(createdEventId, eventType, startDate, endDate, profileRole, title.trim(), supabase);
+        await refreshJournalEntries(supabase);
       }
 
       await refreshEvents();
@@ -504,6 +761,7 @@ export default function CalendarPage() {
         .from("events")
         .update({
           ...basePayload,
+          parent: profileRole,
           start_at: startDate.toISOString(),
           end_at: endDate.toISOString(),
         })
@@ -514,6 +772,7 @@ export default function CalendarPage() {
           .from("events")
           .update({
             ...basePayload,
+            parent: profileRole,
             start_date: startDate.toISOString(),
             end_date: endDate.toISOString(),
           })
@@ -524,6 +783,9 @@ export default function CalendarPage() {
           return;
         }
       }
+
+      await syncJournalForEvent(editingEventId, editEventType, startDate, endDate, profileRole, editTitle.trim(), supabase);
+      await refreshJournalEntries(supabase);
 
       await refreshEvents();
       closeEditForm();
@@ -551,6 +813,9 @@ export default function CalendarPage() {
         setEditError(error.message);
         return;
       }
+
+      await supabase.from("journal_garde").delete().eq("event_id", editingEventId);
+      await refreshJournalEntries(supabase);
 
       await refreshEvents();
       closeEditForm();
@@ -687,6 +952,216 @@ export default function CalendarPage() {
     },
   };
 
+  const specialTypeConfig = useMemo(() => {
+    return SPECIAL_DAY_OPTIONS.reduce<Record<SpecialDayType, { label: string; emoji: string; color: string }>>(
+      (accumulator, item) => {
+        accumulator[item.value] = { label: item.label, emoji: item.emoji, color: item.color };
+        return accumulator;
+      },
+      {
+        ferie: { label: "Jour férié", emoji: "🔴", color: "#D94A4A" },
+        pedagogique: { label: "Congé pédagogique", emoji: "🟡", color: "#D9A74A" },
+        vacances: { label: "Vacances scolaires", emoji: "🟢", color: "#50C878" },
+        scolaire: { label: "Événement scolaire", emoji: "🔵", color: "#4A90D9" },
+      },
+    );
+  }, []);
+
+  const calendarSpecialEvents = useMemo<CalendarSpecialDayEvent[]>(() => {
+    return specialDays
+      .map((specialDay) => {
+        const start = new Date(`${specialDay.date}T00:00:00`);
+        if (Number.isNaN(start.getTime())) {
+          return null;
+        }
+        const end = new Date(start);
+        end.setDate(end.getDate() + 1);
+
+        return {
+          id: `special-${specialDay.id}`,
+          title: specialDay.title,
+          start,
+          end,
+          allDay: true,
+          kind: "special",
+          specialType: specialDay.type,
+          notes: specialDay.notes,
+        };
+      })
+      .filter((item): item is CalendarSpecialDayEvent => item !== null);
+  }, [specialDays]);
+
+  const calendarDisplayEvents = useMemo<CalendarDisplayEvent[]>(() => {
+    return [...events, ...calendarSpecialEvents];
+  }, [calendarSpecialEvents, events]);
+
+  const monthDatePrefix = useMemo(
+    () => `${calendarDate.getFullYear()}-${`${calendarDate.getMonth() + 1}`.padStart(2, "0")}`,
+    [calendarDate],
+  );
+  const yearDatePrefix = useMemo(() => `${calendarDate.getFullYear()}-`, [calendarDate]);
+
+  const journalMonthEntries = useMemo(
+    () => journalEntries.filter((entry) => entry.gardeDate.startsWith(monthDatePrefix)),
+    [journalEntries, monthDatePrefix],
+  );
+  const journalYearEntries = useMemo(
+    () => journalEntries.filter((entry) => entry.gardeDate.startsWith(yearDatePrefix)),
+    [journalEntries, yearDatePrefix],
+  );
+
+  const monthCounts = useMemo(() => {
+    const parent1 = new Set<string>();
+    const parent2 = new Set<string>();
+
+    for (const entry of journalMonthEntries) {
+      const key = `${entry.parentRole}:${entry.gardeDate}`;
+      if (entry.parentRole === "parent1") {
+        parent1.add(key);
+      } else {
+        parent2.add(key);
+      }
+    }
+
+    return { parent1: parent1.size, parent2: parent2.size };
+  }, [journalMonthEntries]);
+
+  const yearCounts = useMemo(() => {
+    const parent1 = new Set<string>();
+    const parent2 = new Set<string>();
+
+    for (const entry of journalYearEntries) {
+      const key = `${entry.parentRole}:${entry.gardeDate}`;
+      if (entry.parentRole === "parent1") {
+        parent1.add(key);
+      } else {
+        parent2.add(key);
+      }
+    }
+
+    return { parent1: parent1.size, parent2: parent2.size };
+  }, [journalYearEntries]);
+
+  const maxMonthCount = Math.max(monthCounts.parent1, monthCounts.parent2, 1);
+
+  const onCreateSpecialDay = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!user || specialDayTitle.trim().length === 0 || specialDayDate.length === 0) {
+      setSpecialDayError("Titre et date sont obligatoires.");
+      return;
+    }
+
+    setIsCreatingSpecialDay(true);
+    setSpecialDayError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.from("jours_speciaux").insert({
+        title: specialDayTitle.trim(),
+        date: specialDayDate,
+        type: specialDayType,
+        notes: specialDayNotes.trim() || null,
+        user_id: user.id,
+      });
+
+      if (error) {
+        const fallback = await supabase.from("jours_speciaux").insert({
+          name: specialDayTitle.trim(),
+          day_date: specialDayDate,
+          kind: specialDayType,
+          note: specialDayNotes.trim() || null,
+          owner_id: user.id,
+        });
+
+        if (fallback.error) {
+          setSpecialDayError(fallback.error.message);
+          return;
+        }
+      }
+
+      await refreshSpecialDays(supabase);
+      setSpecialDayTitle("");
+      setSpecialDayDate(formatForDateInput(new Date()));
+      setSpecialDayType("ferie");
+      setSpecialDayNotes("");
+      setSpecialDayFormOpen(false);
+      setToast({ message: "Jour spécial ajouté.", variant: "success" });
+    } catch (error) {
+      setSpecialDayError(error instanceof Error ? error.message : "Erreur pendant l'ajout du jour spécial.");
+    } finally {
+      setIsCreatingSpecialDay(false);
+    }
+  };
+
+  const onExportCalendarPdf = () => {
+    const doc = new jsPDF();
+    const monthLabel = formatMonthLabel(calendarDate);
+    const fileName = `calendrier-2nest-${toMonthValue(calendarDate)}.pdf`;
+    let y = 18;
+
+    doc.setFontSize(18);
+    doc.text(`Calendrier 2nest - ${monthLabel}`, 14, y);
+
+    y += 9;
+    doc.setFontSize(11);
+    doc.text(`Jours de garde (mois): Parent 1 = ${monthCounts.parent1} | Parent 2 = ${monthCounts.parent2}`, 14, y);
+
+    y += 9;
+    doc.setFontSize(13);
+    doc.text("Événements du mois", 14, y);
+    y += 6;
+
+    const monthEvents = events
+      .filter((eventItem) => toMonthValue(eventItem.start) === toMonthValue(calendarDate))
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    doc.setFontSize(10);
+    if (monthEvents.length === 0) {
+      doc.text("- Aucun événement.", 14, y);
+      y += 6;
+    } else {
+      for (const eventItem of monthEvents) {
+        doc.text(
+          `- ${eventItem.start.toLocaleDateString("fr-CA")} ${eventItem.title} (${eventItem.type})`,
+          14,
+          y,
+        );
+        y += 6;
+        if (y > 270) {
+          doc.addPage();
+          y = 18;
+        }
+      }
+    }
+
+    y += 4;
+    doc.setFontSize(13);
+    doc.text("Jours spéciaux du mois", 14, y);
+    y += 6;
+    doc.setFontSize(10);
+
+    const monthSpecialDays = specialDays
+      .filter((item) => item.date.startsWith(`${calendarDate.getFullYear()}-${`${calendarDate.getMonth() + 1}`.padStart(2, "0")}`))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    if (monthSpecialDays.length === 0) {
+      doc.text("- Aucun jour spécial.", 14, y);
+    } else {
+      for (const item of monthSpecialDays) {
+        doc.text(`- ${formatDateLabel(item.date)} ${item.title} (${specialTypeConfig[item.type].label})`, 14, y);
+        y += 6;
+        if (y > 270) {
+          doc.addPage();
+          y = 18;
+        }
+      }
+    }
+
+    doc.save(fileName);
+    setToast({ message: "PDF du calendrier exporté.", variant: "success" });
+  };
+
   if (checkingSession || isLoadingEvents || isLoadingSwapRequests) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#F6FAFF] to-[#EEF5FC] px-6">
@@ -735,14 +1210,93 @@ export default function CalendarPage() {
         <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-xl font-semibold text-[#17324D]">CALENDRIER</h2>
-            <button
-              type="button"
-              onClick={openForm}
-              className="inline-flex items-center justify-center rounded-xl bg-[#4A90D9] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105"
-            >
-              + Ajouter un événement
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setJournalOpen((current) => !current)}
+                className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                📓 Journal de garde
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSpecialDayError("");
+                  setSpecialDayFormOpen(true);
+                }}
+                className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                ➕ Ajouter un jour spécial
+              </button>
+              <button
+                type="button"
+                onClick={openForm}
+                className="inline-flex items-center justify-center rounded-xl bg-[#4A90D9] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105"
+              >
+                + Ajouter un événement
+              </button>
+              <button
+                type="button"
+                onClick={onExportCalendarPdf}
+                className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                📥 Export PDF du calendrier
+              </button>
+            </div>
           </div>
+
+          {journalOpen && (
+            <div className="mb-4 rounded-2xl border border-[#D7E6F4] bg-[#F8FBFF] p-4">
+              <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">JOURNAL DE GARDE</p>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-[#D7E6F4] bg-white p-3 text-sm text-[#2D4B68]">
+                  <p className="font-semibold text-[#17324D]">{formatMonthLabel(calendarDate)}</p>
+                  <p className="mt-1">Parent 1 : <span className="font-semibold">{monthCounts.parent1} jours</span></p>
+                  <p>Parent 2 : <span className="font-semibold">{monthCounts.parent2} jours</span></p>
+                </div>
+                <div className="rounded-xl border border-[#D7E6F4] bg-white p-3 text-sm text-[#2D4B68]">
+                  <p className="font-semibold text-[#17324D]">Année {calendarDate.getFullYear()}</p>
+                  <p className="mt-1">Parent 1 : <span className="font-semibold">{yearCounts.parent1} jours</span></p>
+                  <p>Parent 2 : <span className="font-semibold">{yearCounts.parent2} jours</span></p>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-[#D7E6F4] bg-white p-3">
+                <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">GRAPHIQUE SIMPLE</p>
+                <div className="mt-2 space-y-2 text-sm">
+                  <div>
+                    <p className="mb-1 font-medium text-[#2D4B68]">Parent 1 ({monthCounts.parent1})</p>
+                    <div className="h-3 rounded-full bg-[#E8F2FC]">
+                      <div className="h-3 rounded-full bg-[#4A90D9]" style={{ width: `${(monthCounts.parent1 / maxMonthCount) * 100}%` }} />
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 font-medium text-[#2D4B68]">Parent 2 ({monthCounts.parent2})</p>
+                    <div className="h-3 rounded-full bg-[#E9F8EE]">
+                      <div className="h-3 rounded-full bg-[#50C878]" style={{ width: `${(monthCounts.parent2 / maxMonthCount) * 100}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-[#D7E6F4] bg-white p-3">
+                <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">LISTE DES JOURS DE GARDE DU MOIS</p>
+                <div className="mt-2 space-y-1 text-sm text-[#2D4B68]">
+                  {journalMonthEntries.length === 0 ? (
+                    <p>Aucune garde ce mois-ci.</p>
+                  ) : (
+                    journalMonthEntries
+                      .sort((a, b) => a.gardeDate.localeCompare(b.gardeDate))
+                      .map((entry) => (
+                        <p key={entry.id}>
+                          {formatDateLabel(entry.gardeDate)} · {entry.parentRole === "parent1" ? "Parent 1" : "Parent 2"}
+                        </p>
+                      ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="mb-4 flex items-center justify-between gap-2 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-3 py-3 sm:px-4">
             <button
@@ -775,18 +1329,41 @@ export default function CalendarPage() {
           <div className="overflow-hidden rounded-2xl border border-[#D7E6F4] bg-white p-2 sm:p-4">
             <Calendar
               localizer={localizer}
-              events={events}
+              events={calendarDisplayEvents}
               startAccessor="start"
               endAccessor="end"
+              allDayAccessor="allDay"
               date={calendarDate}
               onNavigate={(date) => setCalendarDate(date)}
               defaultView={Views.MONTH}
               views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
               toolbar={false}
               style={{ height: 640 }}
-              titleAccessor={(event) => `${event.title} · ${event.type}`}
-              onSelectEvent={openEditForm}
+              titleAccessor={(event: CalendarDisplayEvent) =>
+                event.kind === "special"
+                  ? `${specialTypeConfig[event.specialType].emoji} ${event.title}`
+                  : `${event.title} · ${event.type}`
+              }
+              onSelectEvent={(event: CalendarDisplayEvent) => {
+                if (event.kind === "special") {
+                  return;
+                }
+                openEditForm(event);
+              }}
               eventPropGetter={(event) => {
+                if (event.kind === "special") {
+                  const cfg = specialTypeConfig[event.specialType];
+                  return {
+                    style: {
+                      backgroundColor: cfg.color,
+                      borderRadius: "10px",
+                      border: "none",
+                      color: "#ffffff",
+                      padding: "2px 6px",
+                      fontWeight: 600,
+                    },
+                  };
+                }
                 const isParentOne = event.ownerUserId === user?.id || event.parent === "parent1";
                 return {
                   style: {
@@ -1141,6 +1718,85 @@ export default function CalendarPage() {
                 className="mt-2 w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {isCreatingSwapRequest ? "Envoi..." : "Envoyer la demande"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {specialDayFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-[#17324D]">Ajouter un jour spécial</h2>
+              <button
+                type="button"
+                onClick={() => setSpecialDayFormOpen(false)}
+                className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
+              >
+                ✕
+              </button>
+            </div>
+
+            {specialDayError && (
+              <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm text-[#8D3E45]">{specialDayError}</p>
+            )}
+
+            <form className="space-y-4" onSubmit={onCreateSpecialDay}>
+              <div>
+                <label htmlFor="specialDayTitle" className="mb-1 block text-sm font-medium text-[#2D4B68]">Titre</label>
+                <input
+                  id="specialDayTitle"
+                  type="text"
+                  value={specialDayTitle}
+                  onChange={(event) => setSpecialDayTitle(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                  placeholder="Ex: Congé pédagogique"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="specialDayDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">Date</label>
+                <input
+                  id="specialDayDate"
+                  type="date"
+                  value={specialDayDate}
+                  onChange={(event) => setSpecialDayDate(event.target.value)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="specialDayType" className="mb-1 block text-sm font-medium text-[#2D4B68]">Type</label>
+                <select
+                  id="specialDayType"
+                  value={specialDayType}
+                  onChange={(event) => setSpecialDayType(event.target.value as SpecialDayType)}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                >
+                  {SPECIAL_DAY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.emoji} {option.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="specialDayNotes" className="mb-1 block text-sm font-medium text-[#2D4B68]">Notes (optionnel)</label>
+                <textarea
+                  id="specialDayNotes"
+                  value={specialDayNotes}
+                  onChange={(event) => setSpecialDayNotes(event.target.value)}
+                  rows={3}
+                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isCreatingSpecialDay}
+                className="w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isCreatingSpecialDay ? "Enregistrement..." : "Enregistrer le jour spécial"}
               </button>
             </form>
           </div>
