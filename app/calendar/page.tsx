@@ -133,9 +133,21 @@ type ToastState = {
 };
 
 type DecisionType = "accept" | "refuse";
+type GuardScheduleType = "weekly_alternating" | "biweekly_alternating" | "custom_shared";
+type CustomDayRule = { enabled: boolean; parentRole: ParentRole };
+type CustomScheduleMap = Record<number, CustomDayRule>;
 
 const localizer = momentLocalizer(moment);
 const EVENT_TYPES: EventType[] = ["Garde", "Médecin", "École", "Activité"];
+const WEEKDAY_OPTIONS: Array<{ jsDay: number; label: string }> = [
+  { jsDay: 1, label: "Lundi" },
+  { jsDay: 2, label: "Mardi" },
+  { jsDay: 3, label: "Mercredi" },
+  { jsDay: 4, label: "Jeudi" },
+  { jsDay: 5, label: "Vendredi" },
+  { jsDay: 6, label: "Samedi" },
+  { jsDay: 0, label: "Dimanche" },
+];
 const SPECIAL_DAY_OPTIONS: Array<{ value: SpecialDayType; label: string; emoji: string; color: string }> = [
   { value: "ferie", label: "Jour férié", emoji: "🔴", color: "#D94A4A" },
   { value: "pedagogique", label: "Congé pédagogique", emoji: "🟡", color: "#D9A74A" },
@@ -236,6 +248,41 @@ function listDateKeysBetween(start: Date, end: Date): string[] {
   return values;
 }
 
+function createDefaultCustomSchedule(): CustomScheduleMap {
+  return {
+    0: { enabled: true, parentRole: "parent2" },
+    1: { enabled: true, parentRole: "parent1" },
+    2: { enabled: true, parentRole: "parent1" },
+    3: { enabled: true, parentRole: "parent1" },
+    4: { enabled: true, parentRole: "parent1" },
+    5: { enabled: true, parentRole: "parent1" },
+    6: { enabled: true, parentRole: "parent2" },
+  };
+}
+
+function toUtcDayMs(date: Date): number {
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function resolveScheduleParent(
+  scheduleType: GuardScheduleType,
+  date: Date,
+  anchorDate: Date,
+  customSchedule: CustomScheduleMap,
+): ParentRole | null {
+  if (scheduleType === "custom_shared") {
+    const rule = customSchedule[date.getDay()];
+    if (!rule || !rule.enabled) {
+      return null;
+    }
+    return rule.parentRole;
+  }
+
+  const weekDiff = Math.floor((toUtcDayMs(date) - toUtcDayMs(anchorDate)) / (7 * 24 * 60 * 60 * 1000));
+  const cycleIndex = scheduleType === "weekly_alternating" ? weekDiff : Math.floor(weekDiff / 2);
+  return cycleIndex % 2 === 0 ? "parent1" : "parent2";
+}
+
 export default function CalendarPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -262,6 +309,7 @@ export default function CalendarPage() {
   const [journalOpen, setJournalOpen] = useState(false);
   const [specialDayFormOpen, setSpecialDayFormOpen] = useState(false);
   const [journalEditOpen, setJournalEditOpen] = useState(false);
+  const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
 
   const [formError, setFormError] = useState("");
   const [editError, setEditError] = useState("");
@@ -269,6 +317,7 @@ export default function CalendarPage() {
   const [decisionError, setDecisionError] = useState("");
   const [specialDayError, setSpecialDayError] = useState("");
   const [journalEditError, setJournalEditError] = useState("");
+  const [scheduleError, setScheduleError] = useState("");
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const [title, setTitle] = useState("");
@@ -299,6 +348,7 @@ export default function CalendarPage() {
   const [isCreatingSpecialDay, setIsCreatingSpecialDay] = useState(false);
   const [isSavingJournalEdit, setIsSavingJournalEdit] = useState(false);
   const [isDeletingJournalEntry, setIsDeletingJournalEntry] = useState(false);
+  const [isApplyingSchedule, setIsApplyingSchedule] = useState(false);
 
   const [editingJournalId, setEditingJournalId] = useState("");
   const [editingJournalEventId, setEditingJournalEventId] = useState("");
@@ -306,6 +356,14 @@ export default function CalendarPage() {
   const [editingJournalEndDate, setEditingJournalEndDate] = useState(() => formatForDateInput(new Date()));
   const [editingJournalParentRole, setEditingJournalParentRole] = useState<ParentRole>("parent1");
   const [editingJournalNotes, setEditingJournalNotes] = useState("");
+  const [scheduleType, setScheduleType] = useState<GuardScheduleType>("weekly_alternating");
+  const [customSchedule, setCustomSchedule] = useState<CustomScheduleMap>(() => createDefaultCustomSchedule());
+  const [exchangeTime, setExchangeTime] = useState("17:00");
+  const [exchangeLocation, setExchangeLocation] = useState("École");
+  const [legalContactName, setLegalContactName] = useState("");
+  const [legalCaseNumber, setLegalCaseNumber] = useState("");
+  const [agreementDate, setAgreementDate] = useState(() => formatForDateInput(new Date()));
+  const [mediatorNotes, setMediatorNotes] = useState("");
 
   const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
 
@@ -633,6 +691,16 @@ export default function CalendarPage() {
   const closeSwapForm = () => {
     setSwapFormOpen(false);
     setSwapError("");
+  };
+
+  const openScheduleForm = () => {
+    setScheduleError("");
+    setScheduleFormOpen(true);
+  };
+
+  const closeScheduleForm = () => {
+    setScheduleFormOpen(false);
+    setScheduleError("");
   };
 
   const openJournalEditForm = (entry: JournalGardeEntry) => {
@@ -1223,6 +1291,221 @@ export default function CalendarPage() {
     }
   };
 
+  const onApplyGuardSchedule = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!user) {
+      setScheduleError("Session invalide.");
+      return;
+    }
+
+    if (!exchangeTime || !exchangeLocation.trim() || !legalContactName.trim() || !agreementDate) {
+      setScheduleError("Veuillez remplir les champs obligatoires de l'horaire.");
+      return;
+    }
+
+    const agreementAnchor = new Date(`${agreementDate}T00:00:00`);
+    if (Number.isNaN(agreementAnchor.getTime())) {
+      setScheduleError("Date de l'entente invalide.");
+      return;
+    }
+
+    setIsApplyingSchedule(true);
+    setScheduleError("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const schedulePayload = {
+        user_id: user.id,
+        schedule_type: scheduleType,
+        custom_schedule: scheduleType === "custom_shared" ? customSchedule : null,
+        exchange_time: exchangeTime,
+        exchange_location: exchangeLocation.trim(),
+        legal_contact_name: legalContactName.trim(),
+        case_number: legalCaseNumber.trim() || null,
+        agreement_date: agreementDate,
+        mediator_notes: mediatorNotes.trim() || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: saveScheduleError } = await supabase
+        .from("horaire_garde")
+        .upsert(schedulePayload, { onConflict: "user_id" });
+
+      if (saveScheduleError) {
+        setScheduleError(saveScheduleError.message);
+        return;
+      }
+
+      const startDate = new Date();
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + 12);
+      const startIso = startDate.toISOString();
+      const endIso = endDate.toISOString();
+
+      let existingEventsData: Array<{ id?: string | number }> = [];
+      let existingEventsError: { message: string } | null = null;
+
+      const existingByStartAt = await supabase
+        .from("events")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("type", "Garde")
+        .eq("title", "Horaire de garde (auto)")
+        .gte("start_at", startIso)
+        .lt("start_at", endIso);
+
+      if (existingByStartAt.error) {
+        const fallbackByStartDate = await supabase
+          .from("events")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("type", "Garde")
+          .eq("title", "Horaire de garde (auto)")
+          .gte("start_date", startIso)
+          .lt("start_date", endIso);
+
+        existingEventsData = fallbackByStartDate.data ?? [];
+        existingEventsError = fallbackByStartDate.error;
+      } else {
+        existingEventsData = existingByStartAt.data ?? [];
+      }
+
+      if (existingEventsError) {
+        setScheduleError(existingEventsError.message);
+        return;
+      }
+
+      const existingEventIds = existingEventsData
+        .map((row) => (row.id ? String(row.id) : ""))
+        .filter((value) => value.length > 0);
+
+      if (existingEventIds.length > 0) {
+        await supabase.from("journal_garde").delete().in("event_id", existingEventIds);
+        await supabase.from("events").delete().in("id", existingEventIds);
+      }
+
+      const generatedEvents: Array<{
+        title: string;
+        type: EventType;
+        user_id: string;
+        parent: ParentRole;
+        start_at: string;
+        end_at: string;
+      }> = [];
+
+      const cursor = new Date(startDate);
+      while (cursor < endDate) {
+        const parentRole = resolveScheduleParent(scheduleType, cursor, agreementAnchor, customSchedule);
+        if (parentRole) {
+          const dayStart = new Date(cursor);
+          dayStart.setHours(0, 0, 0, 0);
+          const dayEnd = new Date(cursor);
+          dayEnd.setHours(23, 59, 0, 0);
+
+          generatedEvents.push({
+            title: "Horaire de garde (auto)",
+            type: "Garde",
+            user_id: user.id,
+            parent: parentRole,
+            start_at: dayStart.toISOString(),
+            end_at: dayEnd.toISOString(),
+          });
+        }
+
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      if (generatedEvents.length === 0) {
+        setScheduleError("Aucun jour de garde généré. Vérifiez la configuration personnalisée.");
+        return;
+      }
+
+      let insertedRows:
+        | Array<{ id?: string | number; start_at?: string; start_date?: string; parent?: string; parent_role?: string }>
+        | null = null;
+
+      const inserted = await supabase
+        .from("events")
+        .insert(generatedEvents)
+        .select("id,start_at,start_date,parent,parent_role");
+
+      if (inserted.error) {
+        const fallbackInserted = await supabase
+          .from("events")
+          .insert(
+            generatedEvents.map((row) => ({
+              title: row.title,
+              type: row.type,
+              user_id: row.user_id,
+              parent: row.parent,
+              start_date: row.start_at,
+              end_date: row.end_at,
+            })),
+          )
+          .select("id,start_at,start_date,parent,parent_role");
+
+        if (fallbackInserted.error) {
+          setScheduleError(fallbackInserted.error.message);
+          return;
+        }
+
+        insertedRows = fallbackInserted.data ?? [];
+      } else {
+        insertedRows = inserted.data ?? [];
+      }
+
+      const journalRows = (insertedRows ?? [])
+        .map((row) => {
+          const id = row.id ? String(row.id) : "";
+          const startValue = row.start_at ?? row.start_date;
+          if (!id || !startValue) {
+            return null;
+          }
+
+          const gardeDate = startValue.slice(0, 10);
+          return {
+            event_id: id,
+            garde_date: gardeDate,
+            parent_role: normalizeParentRole(row.parent ?? row.parent_role),
+            title: "Horaire de garde (auto)",
+          };
+        })
+        .filter((row): row is { event_id: string; garde_date: string; parent_role: ParentRole; title: string } => row !== null);
+
+      if (journalRows.length > 0) {
+        const journalInsert = await supabase.from("journal_garde").upsert(journalRows, { onConflict: "event_id,garde_date" });
+
+        if (journalInsert.error) {
+          const fallbackJournalRows = journalRows.map((row) => ({
+            event_id: row.event_id,
+            guard_day: row.garde_date,
+            parent: row.parent_role,
+            title: row.title,
+          }));
+          const fallbackJournalInsert = await supabase
+            .from("journal_garde")
+            .upsert(fallbackJournalRows, { onConflict: "event_id,guard_day" });
+
+          if (fallbackJournalInsert.error) {
+            setScheduleError(fallbackJournalInsert.error.message);
+            return;
+          }
+        }
+      }
+
+      await refreshEvents(supabase);
+      await refreshJournalEntries(supabase);
+      closeScheduleForm();
+      setToast({ message: "Horaire appliqué sur les 12 prochains mois.", variant: "success" });
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "Erreur pendant l'application de l'horaire.");
+    } finally {
+      setIsApplyingSchedule(false);
+    }
+  };
+
   const onExportCalendarPdf = () => {
     const doc = new jsPDF();
     const monthLabel = formatMonthLabel(calendarDate);
@@ -1437,6 +1720,13 @@ export default function CalendarPage() {
               </button>
               <button
                 type="button"
+                onClick={openScheduleForm}
+                className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              >
+                📋 Horaire de garde
+              </button>
+              <button
+                type="button"
                 onClick={openForm}
                 className="inline-flex items-center justify-center rounded-xl bg-[#4A90D9] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105"
               >
@@ -1584,7 +1874,9 @@ export default function CalendarPage() {
                     },
                   };
                 }
-                const isParentOne = event.ownerUserId === user?.id || event.parent === "parent1";
+                const isParentOne = event.parent
+                  ? normalizeParentRole(event.parent) === "parent1"
+                  : event.ownerUserId === user?.id;
                 return {
                   style: {
                     backgroundColor: isParentOne ? "#4A90D9" : "#50C878",
@@ -2037,6 +2329,188 @@ export default function CalendarPage() {
                   {isDeletingJournalEntry ? "Suppression..." : "🗑️ Supprimer"}
                 </button>
               </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {scheduleFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
+          <div className="w-full max-w-3xl rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-[#17324D]">📋 Horaire de garde</h2>
+              <button
+                type="button"
+                onClick={closeScheduleForm}
+                className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
+              >
+                ✕
+              </button>
+            </div>
+
+            {scheduleError && (
+              <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm text-[#8D3E45]">
+                {scheduleError}
+              </p>
+            )}
+
+            <form className="space-y-5" onSubmit={onApplyGuardSchedule}>
+              <section className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] p-4">
+                <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">CONFIGURATION DE L'HORAIRE</p>
+                <div className="mt-3">
+                  <label htmlFor="scheduleType" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                    Type d'horaire
+                  </label>
+                  <select
+                    id="scheduleType"
+                    value={scheduleType}
+                    onChange={(event) => setScheduleType(event.target.value as GuardScheduleType)}
+                    className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                  >
+                    <option value="weekly_alternating">Semaine alternée (7 jours / 7 jours)</option>
+                    <option value="biweekly_alternating">2 semaines / 2 semaines</option>
+                    <option value="custom_shared">Garde partagée personnalisée</option>
+                  </select>
+                </div>
+
+                {scheduleType === "custom_shared" && (
+                  <div className="mt-3 space-y-2">
+                    {WEEKDAY_OPTIONS.map((day) => (
+                      <div
+                        key={day.label}
+                        className="grid grid-cols-1 items-center gap-2 rounded-lg border border-[#E0EBF6] bg-white p-2 sm:grid-cols-[1fr_140px]"
+                      >
+                        <label className="flex items-center gap-2 text-sm text-[#2D4B68]">
+                          <input
+                            type="checkbox"
+                            checked={customSchedule[day.jsDay]?.enabled ?? false}
+                            onChange={(event) =>
+                              setCustomSchedule((current) => ({
+                                ...current,
+                                [day.jsDay]: {
+                                  ...(current[day.jsDay] ?? { enabled: true, parentRole: "parent1" }),
+                                  enabled: event.target.checked,
+                                },
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-[#C6D9EC] text-[#4A90D9] focus:ring-[#4A90D9]/30"
+                          />
+                          {day.label}
+                        </label>
+                        <select
+                          value={customSchedule[day.jsDay]?.parentRole ?? "parent1"}
+                          onChange={(event) =>
+                            setCustomSchedule((current) => ({
+                              ...current,
+                              [day.jsDay]: {
+                                ...(current[day.jsDay] ?? { enabled: true, parentRole: "parent1" }),
+                                parentRole: event.target.value as ParentRole,
+                              },
+                            }))
+                          }
+                          className="w-full rounded-lg border border-[#D8E4F0] bg-white px-2 py-2 text-sm text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-2 focus:ring-[#4A90D9]/20"
+                        >
+                          <option value="parent1">Parent 1</option>
+                          <option value="parent2">Parent 2</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] p-4">
+                <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">DÉTAILS DE L'ÉCHANGE</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="exchangeTime" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Heure de l'échange
+                    </label>
+                    <input
+                      id="exchangeTime"
+                      type="time"
+                      value={exchangeTime}
+                      onChange={(event) => setExchangeTime(event.target.value)}
+                      className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="exchangeLocation" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Lieu de l'échange
+                    </label>
+                    <input
+                      id="exchangeLocation"
+                      type="text"
+                      value={exchangeLocation}
+                      onChange={(event) => setExchangeLocation(event.target.value)}
+                      placeholder="Ex: école, domicile"
+                      className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] p-4">
+                <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">INFORMATIONS LÉGALES</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="legalContactName" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Nom du médiateur ou avocat
+                    </label>
+                    <input
+                      id="legalContactName"
+                      type="text"
+                      value={legalContactName}
+                      onChange={(event) => setLegalContactName(event.target.value)}
+                      className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="legalCaseNumber" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Numéro de dossier (optionnel)
+                    </label>
+                    <input
+                      id="legalCaseNumber"
+                      type="text"
+                      value={legalCaseNumber}
+                      onChange={(event) => setLegalCaseNumber(event.target.value)}
+                      className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label htmlFor="agreementDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Date de l'entente
+                    </label>
+                    <input
+                      id="agreementDate"
+                      type="date"
+                      value={agreementDate}
+                      onChange={(event) => setAgreementDate(event.target.value)}
+                      className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label htmlFor="mediatorNotes" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Notes du médiateur
+                    </label>
+                    <textarea
+                      id="mediatorNotes"
+                      value={mediatorNotes}
+                      onChange={(event) => setMediatorNotes(event.target.value)}
+                      rows={4}
+                      className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <button
+                type="submit"
+                disabled={isApplyingSchedule}
+                className="w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isApplyingSchedule ? "Application..." : "🔄 Appliquer au calendrier"}
+              </button>
             </form>
           </div>
         </div>
