@@ -317,6 +317,21 @@ function normalizeTimeInput(value: string | undefined): string {
   return value.slice(0, 5);
 }
 
+function isHoraireSchemaColumnMissing(message: string): boolean {
+  const normalized = message.toLowerCase();
+  const referencesTable = normalized.includes("horaire_garde");
+  const missingColumnHint =
+    normalized.includes("column") && normalized.includes("does not exist")
+      ? true
+      : normalized.includes("could not find") && normalized.includes("schema cache");
+
+  return referencesTable && missingColumnHint;
+}
+
+function horaireSchemaMigrationMessage(): string {
+  return "Le schéma Supabase de 'horaire_garde' est incomplet (colonne manquante, ex: user_id ou agreement_date). Exécutez le script supabase/horaire_garde_schema_run.sql puis rechargez la page.";
+}
+
 function toUtcDayMs(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -767,6 +782,10 @@ export default function CalendarPage() {
         .maybeSingle();
 
       if (error) {
+        if (isHoraireSchemaColumnMissing(error.message)) {
+          setScheduleError(horaireSchemaMigrationMessage());
+          return;
+        }
         setScheduleError(error.message);
         return;
       }
@@ -1424,8 +1443,8 @@ export default function CalendarPage() {
         .upsert(schedulePayload, { onConflict: "user_id" });
 
       if (saveScheduleError) {
-        if (saveScheduleError.message.toLowerCase().includes("schedule_type") && saveScheduleError.message.toLowerCase().includes("does not exist")) {
-          setScheduleError("Le schéma Supabase est incomplet: colonne 'schedule_type' manquante dans 'horaire_garde'. Exécutez le script supabase/horaire_garde_schema_run.sql.");
+        if (isHoraireSchemaColumnMissing(saveScheduleError.message)) {
+          setScheduleError(horaireSchemaMigrationMessage());
           return;
         }
         setScheduleError(saveScheduleError.message);
