@@ -2074,8 +2074,8 @@ export default function CalendarPage() {
       </main>
 
       {formOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-[#17324D]">Nouvel événement</h2>
               <button
@@ -2159,8 +2159,8 @@ export default function CalendarPage() {
       )}
 
       {editOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-[#17324D]">Modifier l'événement</h2>
               <button
@@ -2259,8 +2259,8 @@ export default function CalendarPage() {
       )}
 
       {swapFormOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-[#17324D]">Nouvelle demande de garde</h2>
               <button
@@ -2332,8 +2332,8 @@ export default function CalendarPage() {
       )}
 
       {journalEditOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-[#17324D]">Modifier une entrée du journal</h2>
               <button
@@ -2430,8 +2430,8 @@ export default function CalendarPage() {
       )}
 
       {scheduleFormOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-          <div className="w-full max-w-3xl rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-[#17324D]">📋 Horaire de garde</h2>
               <button
@@ -2612,8 +2612,8 @@ export default function CalendarPage() {
       )}
 
       {specialDayFormOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-[#17324D]">Ajouter un jour spécial</h2>
               <button
@@ -2691,8 +2691,8 @@ export default function CalendarPage() {
       )}
 
       {decisionOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-[#17324D]">
                 {decisionType === "accept" ? "Accepter la demande" : "Refuser la demande"}
