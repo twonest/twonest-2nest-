@@ -8,8 +8,6 @@ import {
  DollarSign,
  FileText,
  MessageSquare,
- PlusCircle,
- Settings,
  UserCircle,
  Users,
 } from "lucide-react";
@@ -27,11 +25,11 @@ const PUBLIC_ROUTES = new Set(["/", "/login", "/signup"]);
 
 const SHELL_ROUTES: ShellRoute[] = [
  { href: "/dashboard", label: "Tableau de bord", title: "Tableau de bord", icon: UserCircle },
- { href: "/calendar", label: "Calendrier", title: "Calendrier", icon: CalendarIcon, actionLabel: "Ajouter" },
+ { href: "/calendar", label: "Calendrier", title: "Calendrier", icon: CalendarIcon },
  { href: "/messages", label: "Messages", title: "Messages", icon: MessageSquare },
- { href: "/expenses", label: "Dépenses", title: "Dépenses", icon: DollarSign, actionLabel: "Ajouter" },
- { href: "/documents", label: "Documents", title: "Documents", icon: FileText, actionLabel: "Ajouter" },
- { href: "/children", label: "Enfants", title: "Enfants", icon: Users, actionLabel: "Ajouter" },
+ { href: "/expenses", label: "Dépenses", title: "Dépenses", icon: DollarSign },
+ { href: "/documents", label: "Documents", title: "Documents", icon: FileText },
+ { href: "/children", label: "Enfants", title: "Enfants", icon: Users },
  { href: "/profile", label: "Profil", title: "Profil", icon: UserCircle },
 ];
 
@@ -138,7 +136,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
          isActive
           ? "bg-[#7C6B5D] text-white"
-          : "text-[#EDE8E3] hover:bg-[#7C6B5D]/40"
+          : "text-white/75 hover:text-white hover:bg-[#7C6B5D]/40"
         }`}
        >
         <Icon size={18} />
@@ -178,23 +176,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[#D9D0C8] bg-[#F5F0EB] px-6">
      <h1 className="text-2xl font-bold text-[#2C2420]">{pageTitle}</h1>
      <div className="flex items-center gap-2">
-      {currentRoute?.actionLabel && (
-       <button
-        type="button"
-        onClick={() => window.dispatchEvent(new CustomEvent("twonest-shell-add-action"))}
-        className="inline-flex items-center gap-2 rounded-lg bg-[#7C6B5D] px-3 py-2 text-sm font-semibold text-white hover:brightness-105"
-       >
-        <PlusCircle size={16} className="text-white" />
-        <span className="text-white">{currentRoute.actionLabel}</span>
-       </button>
-      )}
-      <button
-       type="button"
-       className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#D9D0C8] bg-transparent text-[#6B5D55]"
-       aria-label="Paramètres"
-      >
-       <Settings size={16} />
-      </button>
      </div>
     </header>
 

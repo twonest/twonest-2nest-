@@ -1939,14 +1939,6 @@ export default function CalendarPage() {
        </button>
        <button
         type="button"
-        onClick={openForm}
-        className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
-       >
-          <PlusCircle size={15} className="mr-2 text-white" />
-          Ajouter un événement
-       </button>
-       <button
-        type="button"
         onClick={onExportCalendarPdf}
         className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
