@@ -184,8 +184,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         onClick={() => window.dispatchEvent(new CustomEvent("twonest-shell-add-action"))}
         className="inline-flex items-center gap-2 rounded-lg bg-[#7C6B5D] px-3 py-2 text-sm font-semibold text-white hover:brightness-105"
        >
-        <PlusCircle size={16} />
-        <span>{currentRoute.actionLabel}</span>
+        <PlusCircle size={16} className="text-white" />
+        <span className="text-white">{currentRoute.actionLabel}</span>
        </button>
       )}
       <button
