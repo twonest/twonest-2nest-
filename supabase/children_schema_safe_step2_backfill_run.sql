@@ -219,6 +219,7 @@ declare
   has_family_id boolean;
   sql text;
   scope_filter text := 'true';
+  child_id_expr text := 'null';
 begin
   select exists (
     select 1
@@ -244,11 +245,21 @@ begin
     scope_filter := '(nullif(trim(coalesce(t.family_id::text, '''')), '''') is not null and nullif(trim(coalesce(t.family_id::text, '''')), '''') = nullif(trim(coalesce(c.family_id, '''')), ''''))';
   end if;
 
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'children'
+      and column_name = 'id'
+  ) then
+    child_id_expr := 'case when nullif(trim(coalesce(c.id::text, '''')), '''') ~ ''^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'' then nullif(trim(coalesce(c.id::text, '''')), '''')::uuid else null end';
+  end if;
+
   sql := format($fmt$
     with candidates as (
       select
         t.id as row_id,
-        c.id as resolved_child_id,
+        %s as resolved_child_id,
         trim(concat_ws(' ', c.first_name, c.last_name)) as resolved_child_name,
         case
           when lower(trim(coalesce(t.child_name, t.enfant, ''))) = lower(trim(concat_ws(' ', c.first_name, c.last_name))) then 2
@@ -258,6 +269,7 @@ begin
       from public.%I t
       join public.children c on %s
       where t.child_id is null
+        and %s is not null
         and nullif(trim(coalesce(t.child_name, t.enfant, '')), '') is not null
         and coalesce(nullif(trim(c.first_name), ''), nullif(trim(c.last_name), '')) is not null
         and lower(trim(coalesce(t.child_name, t.enfant, ''))) in (
@@ -285,7 +297,7 @@ begin
       and r.rn = 1
       and r.score_count = 1
       and t.child_id is null;
-  $fmt$, target_table, scope_filter, target_table);
+  $fmt$, child_id_expr, target_table, scope_filter, child_id_expr, target_table);
 
   execute sql;
 
@@ -294,7 +306,10 @@ begin
     set child_name = coalesce(nullif(trim(t.child_name), ''), trim(concat_ws(' ', c.first_name, c.last_name))),
         enfant = coalesce(nullif(trim(t.enfant), ''), nullif(trim(t.child_name), ''), trim(concat_ws(' ', c.first_name, c.last_name)))
     from public.children c
-    where t.child_id = c.id
+    where nullif(trim(coalesce(t.child_id::text, '')), '') is not null
+      and nullif(trim(coalesce(c.id::text, '')), '') is not null
+      and nullif(trim(coalesce(c.id::text, '')), '') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+      and nullif(trim(coalesce(t.child_id::text, '')), '') = nullif(trim(coalesce(c.id::text, '')), '')
       and (
         nullif(trim(coalesce(t.child_name, '')), '') is null
         or nullif(trim(coalesce(t.enfant, '')), '') is null
