@@ -237,9 +237,9 @@ begin
   ) into has_family_id;
 
   if has_user_id and has_family_id then
-    scope_filter := '((t.user_id is not null and t.user_id = c.user_id) or (nullif(trim(coalesce(t.family_id::text, '''')), '''') is not null and nullif(trim(coalesce(t.family_id::text, '''')), '''') = nullif(trim(coalesce(c.family_id, '''')), '''')))';
+    scope_filter := '((nullif(trim(coalesce(t.user_id::text, '''')), '''') is not null and nullif(trim(coalesce(c.user_id::text, '''')), '''') is not null and nullif(trim(coalesce(t.user_id::text, '''')), '''') = nullif(trim(coalesce(c.user_id::text, '''')), '''')) or (nullif(trim(coalesce(t.family_id::text, '''')), '''') is not null and nullif(trim(coalesce(t.family_id::text, '''')), '''') = nullif(trim(coalesce(c.family_id, '''')), '''')))';
   elsif has_user_id then
-    scope_filter := '(t.user_id is not null and t.user_id = c.user_id)';
+    scope_filter := '(nullif(trim(coalesce(t.user_id::text, '''')), '''') is not null and nullif(trim(coalesce(c.user_id::text, '''')), '''') is not null and nullif(trim(coalesce(t.user_id::text, '''')), '''') = nullif(trim(coalesce(c.user_id::text, '''')), ''''))';
   elsif has_family_id then
     scope_filter := '(nullif(trim(coalesce(t.family_id::text, '''')), '''') is not null and nullif(trim(coalesce(t.family_id::text, '''')), '''') = nullif(trim(coalesce(c.family_id, '''')), ''''))';
   end if;
