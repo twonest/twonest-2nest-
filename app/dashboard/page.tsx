@@ -6,11 +6,14 @@ import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { CalendarIcon, DollarSign, FileText, MessageSquare, UserCircle, Users } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { useFamily } from "@/components/FamilyProvider";
+import { getFeatureAccess, type FeatureKey } from "@/lib/family";
 
 type DashboardAction = {
  label: string;
  href: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+ icon: React.ComponentType<{ size?: number; className?: string }>;
+ feature: FeatureKey;
 };
 
 type ChildSummary = {
@@ -22,12 +25,12 @@ const GLOBAL_CHILD_FILTER_KEY = "twonest.selectedChildId";
 const GLOBAL_CHILD_FILTER_NAME_KEY = "twonest.selectedChildName";
 
 const ACTIONS: DashboardAction[] = [
-  { label: "Calendrier", href: "/calendar", icon: CalendarIcon },
-  { label: "Messages", href: "/messages", icon: MessageSquare },
-  { label: "Dépenses", href: "/expenses", icon: DollarSign },
-  { label: "Documents", href: "/documents", icon: FileText },
-  { label: "Enfants", href: "/children", icon: Users },
-  { label: "Mon profil", href: "/profile", icon: UserCircle },
+ { label: "Calendrier", href: "/calendar", icon: CalendarIcon, feature: "calendar" },
+ { label: "Messages", href: "/messages", icon: MessageSquare, feature: "messages" },
+ { label: "Dépenses", href: "/expenses", icon: DollarSign, feature: "expenses" },
+ { label: "Documents", href: "/documents", icon: FileText, feature: "documents" },
+ { label: "Enfants", href: "/children", icon: Users, feature: "children" },
+ { label: "Mon profil", href: "/profile", icon: UserCircle, feature: "profile" },
 ];
 
 function getFirstName(user: User): string {
@@ -51,22 +54,12 @@ function getFirstName(user: User): string {
 
 export default function DashboardPage() {
  const router = useRouter();
+ const { activeFamilyId, activeFamily, currentRole, currentPermissions } = useFamily();
  const [user, setUser] = useState<User | null>(null);
  const [checkingSession, setCheckingSession] = useState(true);
  const [configError, setConfigError] = useState("");
  const [children, setChildren] = useState<ChildSummary[]>([]);
  const [selectedChildFilter, setSelectedChildFilter] = useState("all");
-
- const resolveFamilyId = async (userId: string): Promise<string> => {
-  const supabase = getSupabaseBrowserClient();
-  const byUserId = await supabase.from("profiles").select("family_id").eq("user_id", userId).maybeSingle();
-  const byId = byUserId.error || !byUserId.data
-   ? await supabase.from("profiles").select("family_id").eq("id", userId).maybeSingle()
-   : null;
-
-  const row = (byUserId.data ?? byId?.data ?? null) as { family_id?: unknown } | null;
-  return typeof row?.family_id === "string" && row.family_id.trim().length > 0 ? row.family_id : userId;
- };
 
  useEffect(() => {
   let supabase;
@@ -93,7 +86,7 @@ export default function DashboardPage() {
 
    setUser(data.user);
 
-   const familyId = await resolveFamilyId(data.user.id);
+  const familyId = activeFamilyId ?? data.user.id;
    const byFamily = await supabase.from("children").select("*").eq("family_id", familyId).order("created_at", { ascending: true });
    const byUser = await supabase.from("children").select("*").eq("user_id", data.user.id).order("created_at", { ascending: true });
    const allRows = [
@@ -138,9 +131,15 @@ export default function DashboardPage() {
   return () => {
    subscription.unsubscribe();
   };
- }, [router]);
+ }, [activeFamilyId, router]);
 
  const firstName = useMemo(() => (user ? getFirstName(user) : "Parent"), [user]);
+ const visibleActions = useMemo(() => {
+  if (!currentRole) {
+   return ACTIONS.filter((action) => action.feature === "profile");
+  }
+  return ACTIONS.filter((action) => getFeatureAccess(action.feature, currentRole, currentPermissions).allowed);
+ }, [currentPermissions, currentRole]);
 
  const onChangeChildFilter = (value: string) => {
   setSelectedChildFilter(value);
@@ -188,6 +187,9 @@ export default function DashboardPage() {
      <div>
       <p className="text-xs font-semibold tracking-[0.2em] text-[#A89080]">TABLEAU DE BORD</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#2C2420]">Bonjour {firstName}</h1>
+            {activeFamily && (
+        <p className="mt-2 text-sm text-[#6B5D55]">Espace actif : {activeFamily.name}</p>
+            )}
      </div>
      <button
       type="button"
@@ -216,19 +218,19 @@ export default function DashboardPage() {
       </select>
      </div>
 
-          {ACTIONS.map((action) => {
-            const Icon = action.icon;
-            return (
-              <Link
-                key={action.label}
-                href={action.href}
-                className="group rounded-2xl border border-[#D9D0C8] bg-white p-6 text-left shadow-[0_1px_4px_rgba(44,36,32,0.06)] transition hover:-translate-y-0.5 hover:border-[#D9D0C8] hover:shadow-[0_2px_8px_rgba(44,36,32,0.08)]"
-              >
-                <Icon size={22} className="text-[#7C6B5D]" />
-                <p className="mt-4 text-lg font-semibold text-[#2C2420] group-hover:text-[#7C6B5D]">{action.label}</p>
-              </Link>
-            );
-          })}
+     {visibleActions.map((action) => {
+      const Icon = action.icon;
+      return (
+       <Link
+        key={action.label}
+        href={action.href}
+        className="group rounded-2xl border border-[#D9D0C8] bg-white p-6 text-left shadow-[0_1px_4px_rgba(44,36,32,0.06)] transition hover:-translate-y-0.5 hover:border-[#D9D0C8] hover:shadow-[0_2px_8px_rgba(44,36,32,0.08)]"
+       >
+        <Icon size={22} className="text-[#7C6B5D]" />
+        <p className="mt-4 text-lg font-semibold text-[#2C2420] group-hover:text-[#7C6B5D]">{action.label}</p>
+       </Link>
+      );
+     })}
     </section>
    </main>
   </div>

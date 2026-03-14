@@ -26,6 +26,9 @@ import {
  type SwapRequestRow,
 } from "@/lib/calendarApi";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import AccessDeniedCard from "@/components/AccessDeniedCard";
+import { useFamily } from "@/components/FamilyProvider";
+import { getFeatureAccess } from "@/lib/family";
 
 type EventType = "Garde" | "Médecin" | "École" | "Activité";
 type ParentRole = "parent1" | "parent2";
@@ -342,6 +345,7 @@ function resolveScheduleParent(
 
 export default function CalendarPage() {
  const router = useRouter();
+ const { activeFamilyId, currentRole: familyRole, currentPermissions } = useFamily();
  const [user, setUser] = useState<User | null>(null);
  const [checkingSession, setCheckingSession] = useState(true);
  const [configError, setConfigError] = useState("");
@@ -571,17 +575,6 @@ export default function CalendarPage() {
   }
  };
 
- const resolveCurrentFamilyId = async (client: ReturnType<typeof getSupabaseBrowserClient>, userId: string): Promise<string> => {
-  const byUserId = await client.from("profiles").select("*").eq("user_id", userId).maybeSingle();
-  const byId = byUserId.error || !byUserId.data
-   ? await client.from("profiles").select("*").eq("id", userId).maybeSingle()
-   : null;
-
-  const row = (byUserId.data ?? byId?.data ?? null) as Record<string, unknown> | null;
-  const candidate = row?.family_id;
-  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate : userId;
- };
-
  const syncJournalForEvent = async (
   eventId: string,
   eventTypeValue: EventType,
@@ -703,7 +696,7 @@ export default function CalendarPage() {
 
    const profileRoleRaw = await fetchProfileRole(supabase, userData.user.id);
    setProfileRole(normalizeParentRole(profileRoleRaw));
-   const familyId = await resolveCurrentFamilyId(supabase, userData.user.id);
+  const familyId = activeFamilyId ?? userData.user.id;
    setCurrentFamilyId(familyId);
 
    await Promise.all([
@@ -729,9 +722,17 @@ export default function CalendarPage() {
   return () => {
    subscription.unsubscribe();
   };
- }, [router]);
+ }, [activeFamilyId, router]);
+
+ const calendarAccess = familyRole
+  ? getFeatureAccess("calendar", familyRole, currentPermissions)
+  : { allowed: true, readOnly: false, reason: "" };
+ const isReadOnly = calendarAccess.readOnly;
 
  const openForm = () => {
+  if (isReadOnly) {
+   return;
+  }
   setFormError("");
   setFormOpen(true);
  };
@@ -742,6 +743,9 @@ export default function CalendarPage() {
  };
 
  const openEditForm = (selectedEvent: CalendarEvent) => {
+  if (isReadOnly) {
+   return;
+  }
   setEditError("");
   setEditingEventId(selectedEvent.id);
   setEditTitle(selectedEvent.title);
@@ -782,6 +786,9 @@ export default function CalendarPage() {
  };
 
  const openScheduleForm = async () => {
+  if (isReadOnly) {
+   return;
+  }
   setScheduleError("");
   setScheduleFormOpen(true);
 
@@ -865,6 +872,10 @@ export default function CalendarPage() {
 
  const onCreateEvent = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+  if (isReadOnly) {
+   setFormError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
 
   if (!canSubmit || !user) {
    setFormError("Tous les champs sont obligatoires.");
@@ -923,6 +934,10 @@ export default function CalendarPage() {
 
  const onUpdateEvent = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+  if (isReadOnly) {
+   setEditError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
 
   if (!editingEventId || editTitle.trim().length === 0 || editStartAt.length === 0 || editEndAt.length === 0) {
    setEditError("Tous les champs sont obligatoires.");
@@ -973,6 +988,9 @@ export default function CalendarPage() {
  };
 
  const onDeleteEvent = async () => {
+  if (isReadOnly) {
+   return;
+  }
   if (!editingEventId) {
    return;
   }
@@ -1003,6 +1021,10 @@ export default function CalendarPage() {
 
  const onCreateSwapRequest = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+  if (isReadOnly) {
+   setSwapError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
 
   if (!user || requestDate.length === 0 || originalDate.length === 0 || proposedDate.length === 0 || swapReason.trim().length === 0) {
    setSwapError("Tous les champs sont obligatoires.");
@@ -1041,6 +1063,10 @@ export default function CalendarPage() {
 
  const onSaveJournalEntry = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+  if (isReadOnly) {
+   setJournalEditError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
 
   if (!editingJournalId || !editingJournalEventId || !editingJournalStartDate || !editingJournalEndDate) {
    setJournalEditError("Tous les champs sont obligatoires.");
@@ -1525,6 +1551,10 @@ export default function CalendarPage() {
 
  const onApplyGuardSchedule = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+  if (isReadOnly) {
+   setScheduleError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
 
   if (!user) {
    setScheduleError("Session invalide.");
@@ -1879,6 +1909,10 @@ export default function CalendarPage() {
   );
  }
 
+ if (!calendarAccess.allowed) {
+  return <AccessDeniedCard title="Calendrier" message={calendarAccess.reason} />;
+ }
+
  return (
   <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#F5F0EB] via-[#EDE8E3] to-[#EDE8E3] px-4 py-8 sm:px-6 sm:py-10">
    <div className="pointer-events-none absolute -top-32 -left-24 h-80 w-80 rounded-full bg-[#7C6B5D]/20 blur-3xl" />
@@ -1902,7 +1936,8 @@ export default function CalendarPage() {
       <button
        type="button"
        onClick={openForm}
-       className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
+        disabled={isReadOnly}
+        className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
       >
       <PlusCircle size={16} className="mr-2 text-white" />
       Ajouter
@@ -1911,6 +1946,11 @@ export default function CalendarPage() {
     </header>
 
     <section className="rounded-2xl border border-[#D9D0C8] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-5">
+      {isReadOnly && (
+       <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm text-[#6B5D55]">
+        Consultation seule dans cet espace pour votre rôle.
+       </p>
+      )}
      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <h2 className="text-xl font-semibold text-[#2C2420]">CALENDRIER</h2>
       <div className="flex flex-wrap items-center gap-2">
@@ -1933,7 +1973,8 @@ export default function CalendarPage() {
        <button
         type="button"
         onClick={openScheduleForm}
-        className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
+        disabled={isReadOnly}
+        className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3] disabled:cursor-not-allowed disabled:opacity-60"
        >
          Horaire de garde
        </button>

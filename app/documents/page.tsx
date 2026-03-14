@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { ArrowLeft, Download, Eye, FileText, PlusCircle, Trash2, X } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import AccessDeniedCard from "@/components/AccessDeniedCard";
+import { useFamily } from "@/components/FamilyProvider";
+import { getFeatureAccess } from "@/lib/family";
 
 type ParentRole = "parent1" | "parent2";
 type DocumentCategory = "medical" | "scolaire" | "legal" | "assurances" | "autres";
@@ -147,19 +150,9 @@ function extractStoragePathFromPublicUrl(fileUrl: string): string {
  return decodeURIComponent(fileUrl.slice(index + marker.length));
 }
 
-async function resolveCurrentFamilyId(userId: string): Promise<string> {
- const supabase = getSupabaseBrowserClient();
- const byUserId = await supabase.from("profiles").select("family_id").eq("user_id", userId).maybeSingle();
- const byId = byUserId.error || !byUserId.data
-  ? await supabase.from("profiles").select("family_id").eq("id", userId).maybeSingle()
-  : null;
-
- const row = (byUserId.data ?? byId?.data ?? null) as { family_id?: unknown } | null;
- return typeof row?.family_id === "string" && row.family_id.trim().length > 0 ? row.family_id : userId;
-}
-
 export default function DocumentsPage() {
  const router = useRouter();
+ const { activeFamilyId, currentRole: familyRole, currentPermissions } = useFamily();
 
  const [user, setUser] = useState<User | null>(null);
  const [checkingSession, setCheckingSession] = useState(true);
@@ -313,7 +306,11 @@ export default function DocumentsPage() {
    console.log("[documents] Documents chargés au démarrage:", mapped);
   }
 
-  setDocuments(mapped);
+   const roleFiltered = familyRole === "mediator" || (familyRole === "step_parent" && currentPermissions.legal_documents)
+    ? mapped.filter((item) => item.category === "legal")
+    : mapped;
+
+   setDocuments(roleFiltered);
   return mapped;
  };
 
@@ -348,7 +345,7 @@ export default function DocumentsPage() {
    const normalizedRole = normalizeParentRole(roleRaw);
    setCurrentRole(normalizedRole);
 
-   const familyId = await resolveCurrentFamilyId(currentUser.id);
+   const familyId = activeFamilyId ?? currentUser.id;
    setCurrentFamilyId(familyId);
 
    try {
@@ -373,7 +370,12 @@ export default function DocumentsPage() {
   return () => {
    subscription.unsubscribe();
   };
- }, [router, currentRole]);
+ }, [activeFamilyId, currentPermissions.legal_documents, familyRole, router, currentRole]);
+
+ const documentsAccess = familyRole
+  ? getFeatureAccess("documents", familyRole, currentPermissions)
+  : { allowed: true, readOnly: false, reason: "" };
+ const isReadOnly = documentsAccess.readOnly;
 
  const filteredDocuments = useMemo(() => {
   const query = searchQuery.trim().toLowerCase();
@@ -417,6 +419,10 @@ export default function DocumentsPage() {
 
  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+  if (isReadOnly) {
+   setFormError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
   if (!user) {
    setFormError("Session invalide.");
    return;
@@ -520,6 +526,9 @@ export default function DocumentsPage() {
   if (!user || !currentFamilyId) {
    return;
   }
+  if (isReadOnly) {
+   return;
+  }
   if (item.uploaderUserId !== user.id) {
    return;
   }
@@ -562,6 +571,10 @@ export default function DocumentsPage() {
   );
  }
 
+ if (!documentsAccess.allowed) {
+  return <AccessDeniedCard title="Documents" message={documentsAccess.reason} />;
+ }
+
  return (
   <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#F5F0EB] via-[#EDE8E3] to-[#EDE8E3] px-4 py-8 sm:px-6 sm:py-10">
    <div className="pointer-events-none absolute -top-32 -left-24 h-80 w-80 rounded-full bg-[#7C6B5D]/20 blur-3xl" />
@@ -584,11 +597,15 @@ export default function DocumentsPage() {
       </Link>
       <button
        type="button"
+         disabled={isReadOnly}
        onClick={() => {
+          if (isReadOnly) {
+           return;
+          }
         setFormError("");
         setFormOpen(true);
        }}
-       className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
+         className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
       >
       <PlusCircle size={16} className="mr-2 text-white" />
         Ajouter un document
@@ -597,6 +614,11 @@ export default function DocumentsPage() {
     </header>
 
     <section className="rounded-2xl border border-[#D9D0C8] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-5">
+      {isReadOnly && (
+       <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm text-[#6B5D55]">
+        Consultation seule dans cet espace pour votre rôle.
+       </p>
+      )}
      <div className="flex flex-wrap items-center gap-2">
       {CATEGORY_TABS.map((tab) => {
        const active = tab.key === activeTab;
@@ -686,7 +708,7 @@ export default function DocumentsPage() {
                <Download size={15} className="mr-2" />
                Télécharger
             </a>
-            {canDelete && (
+            {canDelete && !isReadOnly && (
              <button
               type="button"
               onClick={() => {
@@ -742,6 +764,7 @@ export default function DocumentsPage() {
          id="docTitle"
          type="text"
          value={docTitle}
+         disabled={isReadOnly}
          onChange={(event) => setDocTitle(event.target.value)}
          className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
          placeholder="Ex: Prescription orthodontie"
@@ -753,6 +776,7 @@ export default function DocumentsPage() {
         <select
          id="docCategory"
          value={docCategory}
+         disabled={isReadOnly}
          onChange={(event) => setDocCategory(event.target.value as DocumentCategory)}
          className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
         >
@@ -768,6 +792,7 @@ export default function DocumentsPage() {
          id="docChild"
          type="text"
          value={docChildName}
+         disabled={isReadOnly}
          onChange={(event) => setDocChildName(event.target.value)}
          className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
          placeholder="Ex: Emma"
@@ -779,6 +804,7 @@ export default function DocumentsPage() {
         <textarea
          id="docDescription"
          value={docDescription}
+         disabled={isReadOnly}
          onChange={(event) => setDocDescription(event.target.value)}
          rows={3}
          className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
@@ -790,6 +816,7 @@ export default function DocumentsPage() {
         <input
          id="docFile"
          type="file"
+         disabled={isReadOnly}
          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,application/pdf,image/jpeg,image/png,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
          onChange={onFileChange}
          className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2 text-sm text-[#2C2420]"
@@ -801,6 +828,7 @@ export default function DocumentsPage() {
         <input
          type="checkbox"
          checked={shareWithLegal}
+         disabled={isReadOnly}
          onChange={(event) => setShareWithLegal(event.target.checked)}
          className="h-4 w-4 rounded border-[#C6D9EC] text-[#7C6B5D] focus:ring-[#7C6B5D]/30"
         />
@@ -809,7 +837,7 @@ export default function DocumentsPage() {
 
        <button
         type="submit"
-        disabled={isUploading}
+         disabled={isUploading || isReadOnly}
         className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
        >
         {isUploading ? "Téléversement..." : "Enregistrer le document"}

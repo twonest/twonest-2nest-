@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { resolvePostAuthDestination } from "@/lib/family";
 
 export default function Home() {
  const router = useRouter();
@@ -14,9 +15,13 @@ export default function Home() {
    const supabase = getSupabaseBrowserClient();
 
    supabase.auth.getSession().then(({ data }) => {
-    if (data.session) {
-     router.replace("/dashboard");
+    if (!data.session?.user) {
+     return;
     }
+
+    void resolvePostAuthDestination(data.session.user).then((destination) => {
+     router.replace(destination);
+    });
    });
   } catch (error) {
    setConfigError(

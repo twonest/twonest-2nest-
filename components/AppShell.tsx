@@ -5,32 +5,37 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
  CalendarIcon,
+ ChevronDown,
  DollarSign,
  FileText,
+ Home,
  MessageSquare,
  UserCircle,
  Users,
 } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { FamilyProvider, useFamily } from "@/components/FamilyProvider";
+import { familyRoleLabel, familyTypeLabel, getFeatureAccess, type FeatureKey } from "@/lib/family";
 
 type ShellRoute = {
  href: string;
  label: string;
  title: string;
  icon: React.ComponentType<{ size?: number; className?: string }>;
- actionLabel?: string;
+ feature: FeatureKey;
 };
 
 const PUBLIC_ROUTES = new Set(["/", "/login", "/signup"]);
 
 const SHELL_ROUTES: ShellRoute[] = [
- { href: "/dashboard", label: "Tableau de bord", title: "Tableau de bord", icon: UserCircle },
- { href: "/calendar", label: "Calendrier", title: "Calendrier", icon: CalendarIcon },
- { href: "/messages", label: "Messages", title: "Messages", icon: MessageSquare },
- { href: "/expenses", label: "Dépenses", title: "Dépenses", icon: DollarSign },
- { href: "/documents", label: "Documents", title: "Documents", icon: FileText },
- { href: "/children", label: "Enfants", title: "Enfants", icon: Users },
- { href: "/profile", label: "Profil", title: "Profil", icon: UserCircle },
+ { href: "/dashboard", label: "Tableau de bord", title: "Tableau de bord", icon: Home, feature: "dashboard" },
+ { href: "/calendar", label: "Calendrier", title: "Calendrier", icon: CalendarIcon, feature: "calendar" },
+ { href: "/messages", label: "Messages", title: "Messages", icon: MessageSquare, feature: "messages" },
+ { href: "/expenses", label: "Dépenses", title: "Dépenses", icon: DollarSign, feature: "expenses" },
+ { href: "/documents", label: "Documents", title: "Documents", icon: FileText, feature: "documents" },
+ { href: "/children", label: "Enfants", title: "Enfants", icon: Users, feature: "children" },
+ { href: "/spaces", label: "Espaces", title: "Espaces", icon: Users, feature: "spaces" },
+ { href: "/profile", label: "Profil", title: "Profil", icon: UserCircle, feature: "profile" },
 ];
 
 function isShellRoute(pathname: string): boolean {
@@ -42,14 +47,32 @@ function isShellRoute(pathname: string): boolean {
 }
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
+ return (
+  <FamilyProvider>
+   <ShellContent>{children}</ShellContent>
+  </FamilyProvider>
+ );
+}
+
+function ShellContent({ children }: { children: React.ReactNode }) {
  const pathname = usePathname();
  const router = useRouter();
+ const { memberships, activeFamily, activeFamilyId, currentMembership, currentRole, currentPermissions, setActiveFamily, loading } = useFamily();
  const [firstName, setFirstName] = useState("Parent");
  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+ const [selectorOpen, setSelectorOpen] = useState(false);
 
  const currentRoute = useMemo(() => {
   return SHELL_ROUTES.find((route) => pathname.startsWith(route.href)) ?? null;
  }, [pathname]);
+
+ const visibleRoutes = useMemo(() => {
+  if (!currentRole) {
+   return SHELL_ROUTES.filter((route) => route.feature === "profile");
+  }
+
+  return SHELL_ROUTES.filter((route) => getFeatureAccess(route.feature, currentRole, currentPermissions).allowed);
+ }, [currentPermissions, currentRole]);
 
  useEffect(() => {
   if (!isShellRoute(pathname)) {
@@ -103,6 +126,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   loadProfile();
  }, [pathname]);
 
+ useEffect(() => {
+  setSelectorOpen(false);
+ }, [pathname, activeFamilyId]);
+
  const onSignOut = async () => {
   try {
    const supabase = getSupabaseBrowserClient();
@@ -116,6 +143,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
  }
 
+ if (loading) {
+  return (
+   <div className="flex min-h-screen items-center justify-center bg-[#F5F0EB] px-6">
+  <p className="text-sm font-medium text-[#6B5D55]">Chargement de vos espaces 2nest...</p>
+   </div>
+  );
+ }
+
  const pageTitle = currentRoute?.title ?? "2nest";
 
  return (
@@ -125,8 +160,64 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
      <p className="text-2xl font-bold tracking-tight text-[#EDE8E3]">2nest</p>
     </div>
 
+  <div className="relative mt-5 px-2">
+   <button
+    type="button"
+    onClick={() => setSelectorOpen((current) => !current)}
+    className="flex w-full items-center justify-between rounded-xl border border-[#7C6B5D] bg-[#3A312B] px-3 py-3 text-left text-sm text-[#EDE8E3]"
+   >
+    <div className="min-w-0">
+     <p className="truncate font-semibold">{activeFamily?.name ?? "Choisir un espace"}</p>
+     {currentMembership && (
+    <p className="truncate text-xs text-[#CDBFB2]">
+     {familyRoleLabel(currentMembership.role)} · {familyTypeLabel(activeFamily?.type ?? "family")}
+    </p>
+     )}
+    </div>
+    <ChevronDown size={16} className={`transition ${selectorOpen ? "rotate-180" : ""}`} />
+   </button>
+
+   {selectorOpen && (
+    <div className="absolute inset-x-2 top-[calc(100%+8px)] z-50 rounded-xl border border-[#7C6B5D] bg-[#F8F2EC] p-2 shadow-[0_20px_40px_rgba(0,0,0,0.25)]">
+     <div className="space-y-1">
+    {memberships.map((membership) => {
+     const isActive = membership.familyId === activeFamilyId;
+     return (
+      <button
+       key={membership.id}
+       type="button"
+       onClick={() => {
+      setActiveFamily(membership.familyId);
+      router.refresh();
+       }}
+       className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${
+      isActive ? "bg-[#E7D8C8] text-[#2C2420]" : "text-[#4A3E37] hover:bg-[#EFE5DC]"
+       }`}
+      >
+       <div className="min-w-0">
+      <p className="truncate font-medium">{membership.family.name}</p>
+      <p className="truncate text-xs text-[#7C6B5D]">{familyRoleLabel(membership.role)}</p>
+       </div>
+       {isActive ? <span className="text-xs font-semibold">✓</span> : null}
+      </button>
+     );
+    })}
+     </div>
+
+     <div className="my-2 border-t border-[#D8C8B8]" />
+
+     <Link
+    href="/spaces/new"
+    className="block rounded-lg px-3 py-2 text-sm font-medium text-[#7C6B5D] transition hover:bg-[#EFE5DC]"
+     >
+    + Créer un nouvel espace
+     </Link>
+    </div>
+   )}
+  </div>
+
     <nav className="mt-6 flex-1 space-y-1">
-     {SHELL_ROUTES.map((route) => {
+   {visibleRoutes.map((route) => {
       const Icon = route.icon;
       const isActive = pathname.startsWith(route.href);
       return (
@@ -160,6 +251,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <div className="min-w-0">
        <p className="truncate text-sm font-semibold text-[#EDE8E3]">{firstName}</p>
+        {activeFamily && (
+         <p className="truncate text-xs text-[#CDBFB2]">{activeFamily.name}</p>
+        )}
        <button
         type="button"
         onClick={onSignOut}

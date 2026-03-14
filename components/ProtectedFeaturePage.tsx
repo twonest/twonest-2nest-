@@ -5,13 +5,18 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import AccessDeniedCard from "@/components/AccessDeniedCard";
+import { useFamily } from "@/components/FamilyProvider";
+import { getFeatureAccess, type FeatureKey } from "@/lib/family";
 
 type ProtectedFeaturePageProps = {
  title: string;
+ feature: FeatureKey;
 };
 
-export default function ProtectedFeaturePage({ title }: ProtectedFeaturePageProps) {
+export default function ProtectedFeaturePage({ title, feature }: ProtectedFeaturePageProps) {
  const router = useRouter();
+ const { currentRole, currentPermissions } = useFamily();
  const [checkingSession, setCheckingSession] = useState(true);
  const [configError, setConfigError] = useState("");
 
@@ -72,6 +77,13 @@ export default function ProtectedFeaturePage({ title }: ProtectedFeaturePageProp
   );
  }
 
+ if (currentRole) {
+  const access = getFeatureAccess(feature, currentRole, currentPermissions);
+  if (!access.allowed) {
+   return <AccessDeniedCard title={title} message={access.reason} />;
+  }
+ }
+
  return (
   <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#F5F0EB] via-[#EDE8E3] to-[#EDE8E3] px-6 py-10">
    <div className="pointer-events-none absolute -top-32 -left-24 h-80 w-80 rounded-full bg-[#7C6B5D]/20 blur-3xl" />
@@ -91,7 +103,7 @@ export default function ProtectedFeaturePage({ title }: ProtectedFeaturePageProp
 
     <section className="flex flex-1 items-center justify-center">
      <p className="rounded-2xl border border-[#D9D0C8] bg-white px-8 py-6 text-center text-lg font-medium text-[#2C2420] shadow-[0_10px_28px_rgba(74,144,217,0.12)]">
-      Fonctionnalite bientot disponible
+      Fonctionnalité bientôt disponible
      </p>
     </section>
    </main>

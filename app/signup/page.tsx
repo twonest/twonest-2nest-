@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { resolvePostAuthDestination } from "@/lib/family";
 
 export default function SignupPage() {
  const router = useRouter();
@@ -21,9 +22,13 @@ export default function SignupPage() {
    const supabase = getSupabaseBrowserClient();
 
    supabase.auth.getSession().then(({ data }) => {
-    if (data.session) {
-     router.replace("/dashboard");
+    if (!data.session?.user) {
+     return;
     }
+
+    void resolvePostAuthDestination(data.session.user).then((destination) => {
+     router.replace(destination);
+    });
    });
   } catch (error) {
    setConfigError(
@@ -49,7 +54,7 @@ export default function SignupPage() {
 
   try {
    const supabase = getSupabaseBrowserClient();
-   const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email: email.trim(),
     password,
    });
@@ -59,7 +64,13 @@ export default function SignupPage() {
     return;
    }
 
-   setSuccessMessage("Compte cree. Verifie ton email pour confirmer ton inscription.");
+  if (data.user && data.session) {
+   const destination = await resolvePostAuthDestination(data.user);
+   router.replace(destination);
+   return;
+  }
+
+  setSuccessMessage("Compte cree. Verifie ton email pour confirmer ton inscription, puis créez votre premier espace.");
   } catch (error) {
    setErrorMessage(
     error instanceof Error

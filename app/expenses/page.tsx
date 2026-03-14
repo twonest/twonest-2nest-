@@ -20,6 +20,9 @@ import {
  YAxis,
 } from "recharts";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import AccessDeniedCard from "@/components/AccessDeniedCard";
+import { useFamily } from "@/components/FamilyProvider";
+import { getFeatureAccess } from "@/lib/family";
 
 type ExpenseCategory = "Médical" | "Scolaire" | "Vêtements" | "Activités" | "Nourriture" | "Autre";
 type PaidBy = "parent1" | "parent2";
@@ -352,9 +355,11 @@ function extractProfileDisplayName(profile: Record<string, unknown>): string | n
 
 export default function ExpensesPage() {
  const router = useRouter();
+ const { activeFamilyId, currentRole: familyRole, currentPermissions } = useFamily();
  const [user, setUser] = useState<User | null>(null);
  const [checkingSession, setCheckingSession] = useState(true);
  const [configError, setConfigError] = useState("");
+ const [currentFamilyId, setCurrentFamilyId] = useState<string | null>(null);
 
  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
  const [expenseReviews, setExpenseReviews] = useState<ExpenseReview[]>([]);
@@ -547,13 +552,27 @@ export default function ExpensesPage() {
   }
  };
 
- const refreshExpenses = async (client = getSupabaseBrowserClient()) => {
-  let query = client.from("expenses").select("*");
-  let { data, error } = await query.order("expense_date", { ascending: false });
+ const refreshExpenses = async (client = getSupabaseBrowserClient(), familyId = currentFamilyId, currentUserId = user?.id ?? null) => {
+  if (!familyId && !currentUserId) {
+   return;
+  }
 
-  if (error) {
+  const byFamily = familyId
+   ? await client.from("expenses").select("*").eq("family_id", familyId).order("expense_date", { ascending: false })
+   : { data: null, error: null };
+  const byUser = currentUserId
+   ? await client.from("expenses").select("*").eq("user_id", currentUserId).order("expense_date", { ascending: false })
+   : { data: null, error: null };
+
+  let data = [
+   ...((byFamily.data as SupabaseExpenseRow[] | null) ?? []),
+   ...((byUser.data as SupabaseExpenseRow[] | null) ?? []),
+  ];
+  let error = byFamily.error && byUser.error ? byFamily.error : null;
+
+  if (data.length === 0) {
    const fallback = await client.from("expenses").select("*").order("created_at", { ascending: false });
-   data = fallback.data;
+   data = (fallback.data as SupabaseExpenseRow[] | null) ?? [];
    error = fallback.error;
   }
 
@@ -562,7 +581,15 @@ export default function ExpensesPage() {
    return;
   }
 
-  const mappedEntries = (data as SupabaseExpenseRow[]).map((row): ExpenseItem | null => {
+  const rowMap = new Map<string, SupabaseExpenseRow>();
+  for (const row of data) {
+   if (!row.id) {
+    continue;
+   }
+   rowMap.set(String(row.id), row);
+  }
+
+  const mappedEntries = Array.from(rowMap.values()).map((row): ExpenseItem | null => {
     const parsedAmount = parseAmount(row.amount ?? row.montant);
     const rawDate = row.expense_date ?? row.date ?? row.spent_at ?? row.created_at;
 
@@ -613,6 +640,11 @@ export default function ExpensesPage() {
 
   setExpenses(filtered);
  };
+
+ const expensesAccess = familyRole
+  ? getFeatureAccess("expenses", familyRole, currentPermissions)
+  : { allowed: true, readOnly: false, reason: "" };
+ const isReadOnly = expensesAccess.readOnly;
 
  const refreshExpenseReviews = async (client = getSupabaseBrowserClient()) => {
   let { data, error } = await client.from("expense_reviews").select("*").order("created_at", { ascending: false });
@@ -765,6 +797,7 @@ export default function ExpensesPage() {
     .maybeSingle();
 
    setCurrentParentRole(normalizeParentRole(profileData?.role));
+  setCurrentFamilyId(activeFamilyId ?? userData.user.id);
 
    const { data: profilesData } = await supabase.from("profiles").select("*");
    if (Array.isArray(profilesData)) {
@@ -790,7 +823,7 @@ export default function ExpensesPage() {
 
    setCheckingSession(false);
    await refreshShareRules(supabase);
-   await refreshExpenses(supabase);
+  await refreshExpenses(supabase, activeFamilyId ?? userData.user.id, userData.user.id);
    await refreshExpenseReviews(supabase);
    setIsLoadingExpenses(false);
   };
@@ -808,10 +841,15 @@ export default function ExpensesPage() {
   return () => {
    subscription.unsubscribe();
   };
- }, [router]);
+ }, [activeFamilyId, router]);
 
  const onAddExpense = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+
+  if (isReadOnly) {
+   setFormError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
 
   const parsedAmount = Number(amount.replace(",", "."));
   const parent1Pct = clampPercentage(shareRules[category] ?? 50);
@@ -854,6 +892,7 @@ export default function ExpensesPage() {
    const payloadVariants = [
     {
      user_id: user.id,
+       family_id: currentFamilyId,
      amount: parsedAmount,
      description: description.trim(),
      category,
@@ -871,6 +910,7 @@ export default function ExpensesPage() {
     },
     {
      owner_id: user.id,
+       family_id: currentFamilyId,
      amount: parsedAmount,
      description: description.trim(),
      category,
@@ -888,6 +928,7 @@ export default function ExpensesPage() {
     },
     {
      owner_id: user.id,
+       family_id: currentFamilyId,
      montant: parsedAmount,
      label: description.trim(),
      categorie: category,
@@ -904,6 +945,7 @@ export default function ExpensesPage() {
     },
     {
      owner_id: user.id,
+       family_id: currentFamilyId,
      montant: parsedAmount,
      label: description.trim(),
      categorie: category,
@@ -956,7 +998,7 @@ export default function ExpensesPage() {
     );
    }
 
-   await refreshExpenses();
+  await refreshExpenses();
    await refreshExpenseReviews();
    setAmount("");
    setDescription("");
@@ -979,6 +1021,9 @@ export default function ExpensesPage() {
  };
 
  const onMarkReimbursed = async (expenseId: string) => {
+  if (isReadOnly) {
+   return;
+  }
   setIsMarkingReimbursed(true);
   setListError("");
 
@@ -1012,6 +1057,9 @@ export default function ExpensesPage() {
  };
 
  const onDeleteExpense = async (expense: ExpenseItem) => {
+  if (isReadOnly) {
+   return;
+  }
   const shouldDelete = window.confirm("Supprimer cette dépense ? Cette action est définitive.");
   if (!shouldDelete) {
    return;
@@ -1305,6 +1353,10 @@ export default function ExpensesPage() {
   );
  }
 
+ if (!expensesAccess.allowed) {
+  return <AccessDeniedCard title="Dépenses" message={expensesAccess.reason} />;
+ }
+
  return (
   <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#F5F0EB] via-[#EDE8E3] to-[#EDE8E3] px-4 py-8 sm:px-6 sm:py-10">
    <div className="pointer-events-none absolute -top-32 -left-24 h-80 w-80 rounded-full bg-[#7C6B5D]/20 blur-3xl" />
@@ -1417,10 +1469,16 @@ export default function ExpensesPage() {
     {activeTab === "expenses" ? (
      <>
       <section className="rounded-2xl border border-[#D9D0C8] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-5">
+       {isReadOnly && (
+      <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm text-[#6B5D55]">
+       Consultation seule dans cet espace pour votre rôle.
+      </p>
+       )}
        <button
         type="button"
+      disabled={isReadOnly}
         onClick={() => setIsAddExpenseFormOpen(true)}
-        className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
+      className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
        >
           <PlusCircle size={16} className="mr-2 inline-flex text-white" />
           Ajouter une dépense
@@ -1473,6 +1531,7 @@ export default function ExpensesPage() {
            min="0"
            step="0.01"
            value={amount}
+             disabled={isReadOnly}
            onChange={(event) => setAmount(event.target.value)}
            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
            placeholder="0.00"
@@ -1487,6 +1546,7 @@ export default function ExpensesPage() {
            id="description"
            type="text"
            value={description}
+             disabled={isReadOnly}
            onChange={(event) => setDescription(event.target.value)}
            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
            placeholder="Ex: Pharmacie"
@@ -1500,6 +1560,7 @@ export default function ExpensesPage() {
           <select
            id="category"
            value={category}
+             disabled={isReadOnly}
            onChange={(event) => setCategory(event.target.value as ExpenseCategory)}
            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
           >
@@ -1518,6 +1579,7 @@ export default function ExpensesPage() {
           <select
            id="paidBy"
            value={paidBy}
+             disabled={isReadOnly}
            onChange={(event) => setPaidBy(event.target.value as PaidBy)}
            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
           >
@@ -1534,6 +1596,7 @@ export default function ExpensesPage() {
            id="expenseDate"
            type="date"
            value={expenseDate}
+             disabled={isReadOnly}
            onChange={(event) => setExpenseDate(event.target.value)}
            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
           />
@@ -1547,6 +1610,7 @@ export default function ExpensesPage() {
           <input
            id="receipt"
            type="file"
+             disabled={isReadOnly}
            accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
            onChange={onReceiptChange}
            className="hidden"
@@ -1567,7 +1631,7 @@ export default function ExpensesPage() {
 
          <button
           type="submit"
-          disabled={isCreatingExpense}
+         disabled={isCreatingExpense || isReadOnly}
           className="sm:col-span-2 mt-1 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
          >
           {isCreatingExpense ? "Ajout..." : "Ajouter la dépense"}
@@ -1694,7 +1758,7 @@ export default function ExpensesPage() {
               <button
                type="button"
                onClick={() => onMarkReimbursed(expense.id)}
-               disabled={isMarkingReimbursed || deletingExpenseId === expense.id}
+                disabled={isReadOnly || isMarkingReimbursed || deletingExpenseId === expense.id}
                className="rounded-xl bg-[#7C6B5D] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
               >
                Marquer comme remboursé
@@ -1704,7 +1768,7 @@ export default function ExpensesPage() {
              <button
               type="button"
               onClick={() => onDeleteExpense(expense)}
-              disabled={deletingExpenseId === expense.id || isMarkingReimbursed}
+              disabled={isReadOnly || deletingExpenseId === expense.id || isMarkingReimbursed}
               className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm font-semibold text-[#A85C52] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
              >
                 <Trash2 size={14} className="mr-2 inline-flex" />
@@ -1719,8 +1783,9 @@ export default function ExpensesPage() {
 
        <button
         type="button"
+        disabled={isReadOnly}
         onClick={() => setIsAddExpenseFormOpen(true)}
-        className="mt-4 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
+        className="mt-4 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
        >
           <PlusCircle size={16} className="mr-2 inline-flex text-white" />
           Ajouter une dépense

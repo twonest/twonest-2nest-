@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { resolvePostAuthDestination } from "@/lib/family";
 
 export default function LoginPage() {
  const router = useRouter();
@@ -20,9 +21,13 @@ export default function LoginPage() {
    const supabase = getSupabaseBrowserClient();
 
    supabase.auth.getSession().then(({ data }) => {
-    if (data.session) {
-     router.replace("/dashboard");
+    if (!data.session?.user) {
+     return;
     }
+
+    void resolvePostAuthDestination(data.session.user).then((destination) => {
+     router.replace(destination);
+    });
    });
   } catch (error) {
    setConfigError(
@@ -56,7 +61,14 @@ export default function LoginPage() {
     return;
    }
 
-   router.replace("/dashboard");
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) {
+   setErrorMessage("Session introuvable après connexion.");
+   return;
+  }
+
+  const destination = await resolvePostAuthDestination(data.user);
+  router.replace(destination);
   } catch (error) {
    setErrorMessage(
     error instanceof Error

@@ -6,8 +6,16 @@ import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { ArrowLeft, Eye, PlusCircle, Trash2, UserCircle, X } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import AccessDeniedCard from "@/components/AccessDeniedCard";
+import { useFamily } from "@/components/FamilyProvider";
+import {
+ CHILD_PERMISSION_OPTIONS,
+ getAllowedChildPermissionDefaults,
+ getFeatureAccess,
+ type ChildPermissionKey,
+ type FamilyRole,
+} from "@/lib/family";
 
-type ParentRole = "parent1" | "parent2";
 type ChildTab = "infos" | "sante" | "urgence" | "documents";
 
 type EmergencyContact = {
@@ -83,6 +91,13 @@ type ToastState = {
  variant: "success" | "error";
 };
 
+type StepParentMember = {
+ id: string;
+ userId: string;
+ displayName: string;
+ role: FamilyRole;
+};
+
 const SHARED_CHILD_KEY = "twonest.selectedChildId";
 const SHARED_CHILD_NAME_KEY = "twonest.selectedChildName";
 const SCHOOL_LEVEL_OPTIONS = [
@@ -103,11 +118,6 @@ const SCHOOL_LEVEL_OPTIONS = [
  { value: "S5", label: "S5 — Secondaire 5" },
  { value: "AUTRE", label: "AUTRE — Autre" },
 ] as const;
-
-function normalizeParentRole(value: string | null | undefined): ParentRole {
- const normalized = (value ?? "").toLowerCase();
- return normalized.includes("2") ? "parent2" : "parent1";
-}
 
 function toAgeLabel(birthDate: string): string {
  if (!birthDate) {
@@ -203,26 +213,17 @@ function emptyChild(): ChildProfile {
  };
 }
 
-async function resolveCurrentFamilyId(userId: string): Promise<string> {
- const supabase = getSupabaseBrowserClient();
- const byUserId = await supabase.from("profiles").select("family_id").eq("user_id", userId).maybeSingle();
- const byId = byUserId.error || !byUserId.data
-  ? await supabase.from("profiles").select("family_id").eq("id", userId).maybeSingle()
-  : null;
-
- const row = (byUserId.data ?? byId?.data ?? null) as { family_id?: unknown } | null;
- return typeof row?.family_id === "string" && row.family_id.trim().length > 0 ? row.family_id : userId;
-}
-
 export default function ChildrenPage() {
  const router = useRouter();
+ const { activeFamilyId, currentRole: familyRole, currentPermissions } = useFamily();
 
  const [user, setUser] = useState<User | null>(null);
  const [checkingSession, setCheckingSession] = useState(true);
  const [configError, setConfigError] = useState("");
  const [currentFamilyId, setCurrentFamilyId] = useState<string | null>(null);
- const [currentRole, setCurrentRole] = useState<ParentRole>("parent1");
  const [defaultFamilyName, setDefaultFamilyName] = useState("");
+ const [stepParentMembers, setStepParentMembers] = useState<StepParentMember[]>([]);
+ const [childPermissionsByUser, setChildPermissionsByUser] = useState<Record<string, Record<string, Partial<Record<ChildPermissionKey, boolean>>>>>({});
 
  const [children, setChildren] = useState<ChildProfile[]>([]);
  const [selectedChildId, setSelectedChildId] = useState("");
@@ -249,6 +250,36 @@ export default function ChildrenPage() {
   () => children.find((item) => item.id === selectedChildId) ?? null,
   [children, selectedChildId],
  );
+
+ const currentUserChildPermissions = useMemo(() => {
+  if (!user || !selectedChild) {
+   return {} as Partial<Record<ChildPermissionKey, boolean>>;
+  }
+
+  return childPermissionsByUser[user.id]?.[selectedChild.id] ?? {};
+ }, [childPermissionsByUser, selectedChild, user]);
+
+ const childPageAccess = useMemo(() => {
+  if (!familyRole) {
+   return { allowed: true, readOnly: false, reason: "" };
+  }
+
+  if (familyRole === "step_parent") {
+   const hasAnyPermission = Object.values(currentUserChildPermissions).some(Boolean)
+    || Object.values(childPermissionsByUser[user?.id ?? ""] ?? {}).some((permissions) => Object.values(permissions).some(Boolean));
+   return hasAnyPermission
+    ? { allowed: true, readOnly: true, reason: "" }
+    : { allowed: false, readOnly: true, reason: "Le profil enfant n’est pas accessible sans permissions enfant explicites." };
+  }
+
+  return getFeatureAccess("children", familyRole, currentPermissions);
+ }, [childPermissionsByUser, currentPermissions, currentUserChildPermissions, familyRole, user?.id]);
+
+ const canEditChild = familyRole === "parent";
+ const canViewSchoolInfo = familyRole === "parent" || Boolean(currentUserChildPermissions.school_info);
+ const canViewEmergency = familyRole === "parent" || Boolean(currentUserChildPermissions.emergency_contacts);
+ const canViewHealth = familyRole === "parent" || Boolean(currentUserChildPermissions.medical_record);
+ const canViewDocuments = familyRole === "parent" || Boolean(currentUserChildPermissions.legal_documents);
 
  useEffect(() => {
   if (!toast) {
@@ -407,12 +438,6 @@ export default function ChildrenPage() {
    setUser(currentUser);
    setCheckingSession(false);
 
-   const roleByUser = await supabase.from("profiles").select("role").eq("user_id", currentUser.id).maybeSingle();
-   const roleById = roleByUser.error || !roleByUser.data
-    ? await supabase.from("profiles").select("role").eq("id", currentUser.id).maybeSingle()
-    : null;
-   setCurrentRole(normalizeParentRole((roleByUser.data?.role ?? roleById?.data?.role ?? null) as string | null));
-
    const profileByUser = await supabase.from("profiles").select("last_name, nom").eq("user_id", currentUser.id).maybeSingle();
    const profileById = profileByUser.error || !profileByUser.data
     ? await supabase.from("profiles").select("last_name, nom").eq("id", currentUser.id).maybeSingle()
@@ -420,11 +445,63 @@ export default function ChildrenPage() {
    const lastName = (profileByUser.data?.last_name ?? profileByUser.data?.nom ?? profileById?.data?.last_name ?? profileById?.data?.nom ?? "") as string;
    setDefaultFamilyName(lastName.trim());
 
-   const familyId = await resolveCurrentFamilyId(currentUser.id);
+  const familyId = activeFamilyId ?? currentUser.id;
    setCurrentFamilyId(familyId);
 
    try {
     const loadedChildren = await refreshChildren(currentUser.id, familyId);
+   const memberResponse = await supabase
+    .from("family_members")
+    .select("id, user_id, role")
+    .eq("family_id", familyId)
+    .eq("role", "step_parent")
+    .eq("status", "active");
+
+   const profilesResponse = await supabase.from("profiles").select("user_id, first_name, last_name, prenom, nom, email");
+   const profileMap = new Map<string, string>();
+   for (const row of ((profilesResponse.data ?? []) as Array<Record<string, unknown>>)) {
+    const userId = typeof row.user_id === "string" ? row.user_id : null;
+    if (!userId) {
+    continue;
+    }
+    const displayName = [row.first_name, row.prenom, row.last_name, row.nom]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .map((value) => String(value).trim())
+    .join(" ") || (typeof row.email === "string" ? row.email : "Membre");
+    profileMap.set(userId, displayName);
+   }
+
+   const nextMembers = ((memberResponse.data ?? []) as Array<Record<string, unknown>>)
+    .map((row): StepParentMember | null => {
+    if (typeof row.id !== "string" || typeof row.user_id !== "string") {
+     return null;
+    }
+    return {
+     id: row.id,
+     userId: row.user_id,
+     displayName: profileMap.get(row.user_id) ?? "Beau-parent",
+     role: row.role === "step_parent" ? "step_parent" : "step_parent",
+    };
+    })
+    .filter((item): item is StepParentMember => item !== null);
+   setStepParentMembers(nextMembers);
+
+   const permissionResponse = loadedChildren.length > 0
+    ? await supabase.from("child_permissions").select("child_id, user_id, permissions").in("child_id", loadedChildren.map((child) => child.id))
+    : { data: [] as Array<Record<string, unknown>> };
+
+   const nextPermissions: Record<string, Record<string, Partial<Record<ChildPermissionKey, boolean>>>> = {};
+   for (const row of ((permissionResponse.data ?? []) as Array<Record<string, unknown>>)) {
+    if (typeof row.user_id !== "string" || typeof row.child_id !== "string") {
+     continue;
+    }
+    nextPermissions[row.user_id] = nextPermissions[row.user_id] ?? {};
+    nextPermissions[row.user_id][row.child_id] = typeof row.permissions === "object" && row.permissions !== null
+     ? (row.permissions as Partial<Record<ChildPermissionKey, boolean>>)
+     : {};
+   }
+   setChildPermissionsByUser(nextPermissions);
+
     if (loadedChildren[0]) {
      await refreshChildDocuments(loadedChildren[0], currentUser.id, familyId);
     }
@@ -446,7 +523,7 @@ export default function ChildrenPage() {
   });
 
   return () => subscription.unsubscribe();
- }, [router]);
+ }, [activeFamilyId, router]);
 
  useEffect(() => {
   if (!selectedChild || !user || !currentFamilyId) {
@@ -467,6 +544,10 @@ export default function ChildrenPage() {
 
  const onAddChild = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+  if (!canEditChild) {
+   setFormError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
   if (!user || !currentFamilyId) {
    return;
   }
@@ -539,6 +620,10 @@ export default function ChildrenPage() {
  };
 
  const onSaveChild = async () => {
+  if (!canEditChild) {
+   setFormError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
   if (!selectedChild || !user || !currentFamilyId) {
    return;
   }
@@ -617,6 +702,10 @@ export default function ChildrenPage() {
  };
 
  const onUploadPhoto = async (file: File) => {
+  if (!canEditChild) {
+   setFormError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
   if (!selectedChild || !user) {
    return;
   }
@@ -647,6 +736,10 @@ export default function ChildrenPage() {
  };
 
  const onAddEmergencyContact = () => {
+  if (!canEditChild) {
+   setFormError("Votre rôle est en lecture seule dans cet espace.");
+   return;
+  }
   if (!newContactName.trim() || !newContactPhone.trim()) {
    setFormError("Nom et téléphone du contact d'urgence sont requis.");
    return;
@@ -672,10 +765,40 @@ export default function ChildrenPage() {
  };
 
  const onDeleteEmergencyContact = (contactId: string) => {
+  if (!canEditChild) {
+   return;
+  }
   updateSelectedChild((current) => ({
    ...current,
    emergencyContacts: current.emergencyContacts.filter((item) => item.id !== contactId),
   }));
+ };
+
+ const onSaveChildPermissions = async () => {
+  if (!canEditChild || !user || !selectedChild) {
+   return;
+  }
+
+  setIsSaving(true);
+  setFormError("");
+
+  try {
+   const supabase = getSupabaseBrowserClient();
+   for (const member of stepParentMembers) {
+    await supabase.from("child_permissions").upsert({
+     child_id: selectedChild.id,
+     user_id: member.userId,
+     accorde_par: user.id,
+     permissions: childPermissionsByUser[member.userId]?.[selectedChild.id] ?? {},
+    }, { onConflict: "child_id,user_id" });
+   }
+
+   setToast({ message: " Permissions enfant sauvegardées.", variant: "success" });
+  } catch (error) {
+   setFormError(error instanceof Error ? error.message : "Erreur pendant la sauvegarde des permissions enfant.");
+  } finally {
+   setIsSaving(false);
+  }
  };
 
  const applyGlobalFilterForChild = (child: ChildProfile) => {
@@ -700,6 +823,10 @@ export default function ChildrenPage() {
   );
  }
 
+ if (!childPageAccess.allowed) {
+  return <AccessDeniedCard title="Enfants" message={childPageAccess.reason} />;
+ }
+
  return (
   <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#FFF8ED] via-[#FFFDF8] to-[#F4F8FF] px-4 py-8 sm:px-6 sm:py-10">
    <div className="pointer-events-none absolute -top-32 -left-24 h-80 w-80 rounded-full bg-[#FFDCA8]/30 blur-3xl" />
@@ -722,13 +849,17 @@ export default function ChildrenPage() {
       </Link>
       <button
        type="button"
+        disabled={!canEditChild}
        onClick={() => {
+         if (!canEditChild) {
+          return;
+         }
         if (!newLastName && defaultFamilyName) {
          setNewLastName(defaultFamilyName);
         }
         setIsAddOpen(true);
        }}
-       className="inline-flex items-center justify-center rounded-xl bg-[#F59E66] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(245,158,102,0.35)] transition hover:brightness-105"
+        className="inline-flex items-center justify-center rounded-xl bg-[#F59E66] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(245,158,102,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <PlusCircle size={16} className="mr-2 text-white" />
         Ajouter un enfant
@@ -812,9 +943,9 @@ export default function ChildrenPage() {
       <div className="mb-4 flex flex-wrap gap-2">
        {[
       { key: "infos", label: "Infos générales" },
-      { key: "sante", label: "Santé" },
-      { key: "urgence", label: "Contacts d'urgence" },
-      { key: "documents", label: "Documents de l'enfant" },
+      ...(canViewHealth ? [{ key: "sante", label: "Santé" }] : []),
+      ...(canViewEmergency ? [{ key: "urgence", label: "Contacts d'urgence" }] : []),
+      ...(canViewDocuments ? [{ key: "documents", label: "Documents de l'enfant" }] : []),
        ].map((tab) => (
         <button
          key={tab.key}
@@ -849,7 +980,7 @@ export default function ChildrenPage() {
            type="file"
            accept=".jpg,.jpeg,.png,image/jpeg,image/png"
            className="hidden"
-           disabled={isUploadingPhoto}
+           disabled={isUploadingPhoto || !canEditChild}
            onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
@@ -864,6 +995,7 @@ export default function ChildrenPage() {
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Prénom</label>
          <input
           value={selectedChild.firstName}
+          disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, firstName: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -873,6 +1005,7 @@ export default function ChildrenPage() {
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Nom</label>
          <input
           value={selectedChild.lastName}
+          disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, lastName: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -883,25 +1016,31 @@ export default function ChildrenPage() {
          <input
           type="date"
           value={selectedChild.birthDate}
+          disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, birthDate: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
          <p className="mt-1 text-xs text-[#8B6E52]">Âge: {toAgeLabel(selectedChild.birthDate) || "-"}</p>
         </div>
 
+        {canViewSchoolInfo && (
         <div>
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">École</label>
          <input
           value={selectedChild.schoolName}
+          disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, schoolName: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
         </div>
+        )}
 
+        {canViewSchoolInfo && (
         <div className="sm:col-span-2">
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Niveau scolaire</label>
          <select
           value={selectedChild.schoolLevel}
+          disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, schoolLevel: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          >
@@ -911,8 +1050,10 @@ export default function ChildrenPage() {
           ))}
          </select>
         </div>
+          )}
 
-        <div className="sm:col-span-2">
+          {canEditChild && (
+          <div className="sm:col-span-2">
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Notes générales</label>
          <textarea
           rows={4}
@@ -921,15 +1062,64 @@ export default function ChildrenPage() {
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
         </div>
+        )}
+
+        {canEditChild && stepParentMembers.length > 0 && (
+         <div className="sm:col-span-2 rounded-2xl border border-[#E7D8C8] bg-[#FFF8EF] p-4">
+          <p className="text-sm font-semibold text-[#5D4127]">Accès accordés</p>
+          <p className="mt-1 text-sm text-[#8B6E52]">Qui peut voir les infos de {selectedChild.firstName || "cet enfant"} ?</p>
+
+          <div className="mt-4 space-y-4">
+           {stepParentMembers.map((member) => {
+            const memberPermissions = childPermissionsByUser[member.userId]?.[selectedChild.id] ?? getAllowedChildPermissionDefaults();
+            return (
+             <div key={member.id} className="rounded-xl border border-[#E7D8C8] bg-white p-3">
+              <p className="font-semibold text-[#2C2420]">{member.displayName}</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+               {CHILD_PERMISSION_OPTIONS.map((option) => (
+                <label key={option.value} className="flex items-center gap-2 text-sm text-[#6B5D55]">
+                 <input
+                  type="checkbox"
+                  checked={Boolean(memberPermissions[option.value])}
+                  onChange={(event) => setChildPermissionsByUser((current) => ({
+                   ...current,
+                   [member.userId]: {
+                    ...(current[member.userId] ?? {}),
+                    [selectedChild.id]: {
+                     ...((current[member.userId] ?? {})[selectedChild.id] ?? getAllowedChildPermissionDefaults()),
+                     [option.value]: event.target.checked,
+                    },
+                   },
+                  }))}
+                 />
+                 <span>{option.label}</span>
+                </label>
+               ))}
+              </div>
+             </div>
+            );
+           })}
+          </div>
+
+          <button
+           type="button"
+           onClick={() => void onSaveChildPermissions()}
+           className="mt-4 rounded-xl bg-[#F59E66] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(245,158,102,0.2)] transition hover:brightness-105"
+          >
+           Sauvegarder les permissions
+          </button>
+         </div>
+        )}
        </div>
       )}
 
-      {activeTab === "sante" && (
+      {activeTab === "sante" && canViewHealth && (
        <div className="grid gap-4 sm:grid-cols-2">
         <div>
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Médecin (nom)</label>
          <input
           value={selectedChild.doctorName}
+           disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, doctorName: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -938,6 +1128,7 @@ export default function ChildrenPage() {
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Médecin (téléphone)</label>
          <input
           value={selectedChild.doctorPhone}
+           disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, doctorPhone: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -946,6 +1137,7 @@ export default function ChildrenPage() {
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Dentiste (nom)</label>
          <input
           value={selectedChild.dentistName}
+           disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, dentistName: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -954,6 +1146,7 @@ export default function ChildrenPage() {
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Dentiste (téléphone)</label>
          <input
           value={selectedChild.dentistPhone}
+           disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, dentistPhone: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -962,6 +1155,7 @@ export default function ChildrenPage() {
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Groupe sanguin</label>
          <input
           value={selectedChild.bloodType}
+           disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, bloodType: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -970,6 +1164,7 @@ export default function ChildrenPage() {
          <label className="mb-1 block text-sm font-medium text-[#6E5237]">Numéro assurance maladie</label>
          <input
           value={selectedChild.healthInsuranceNumber}
+           disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, healthInsuranceNumber: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -979,6 +1174,7 @@ export default function ChildrenPage() {
          <textarea
           rows={3}
           value={selectedChild.allergies}
+           disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, allergies: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -988,6 +1184,7 @@ export default function ChildrenPage() {
          <textarea
           rows={3}
           value={selectedChild.medications}
+           disabled={!canEditChild}
           onChange={(event) => updateSelectedChild((current) => ({ ...current, medications: event.target.value }))}
           className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -995,24 +1192,27 @@ export default function ChildrenPage() {
        </div>
       )}
 
-      {activeTab === "urgence" && (
+      {activeTab === "urgence" && canViewEmergency && (
        <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-3">
          <input
           placeholder="Nom"
           value={newContactName}
+          disabled={!canEditChild}
           onChange={(event) => setNewContactName(event.target.value)}
           className="rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
          <input
           placeholder="Lien (grand-mère, oncle...)"
           value={newContactRelation}
+          disabled={!canEditChild}
           onChange={(event) => setNewContactRelation(event.target.value)}
           className="rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
          <input
           placeholder="Téléphone"
           value={newContactPhone}
+          disabled={!canEditChild}
           onChange={(event) => setNewContactPhone(event.target.value)}
           className="rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
          />
@@ -1021,6 +1221,7 @@ export default function ChildrenPage() {
         <button
          type="button"
          onClick={onAddEmergencyContact}
+         disabled={!canEditChild}
          className="rounded-xl border border-[#E7D8C8] bg-[#FFF8EF] px-3 py-2 text-sm font-semibold text-[#7A5E45]"
         >
           <PlusCircle size={14} className="mr-2 inline-flex" />
@@ -1052,7 +1253,7 @@ export default function ChildrenPage() {
        </div>
       )}
 
-      {activeTab === "documents" && (
+      {activeTab === "documents" && canViewDocuments && (
        <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
          <p className="text-sm font-medium text-[#6E5237]">Documents liés à cet enfant</p>
@@ -1095,10 +1296,10 @@ export default function ChildrenPage() {
        <button
         type="button"
         onClick={() => void onSaveChild()}
-        disabled={isSaving}
+        disabled={isSaving || !canEditChild}
         className="w-full rounded-xl bg-[#F59E66] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(245,158,102,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
        >
-        {isSaving ? "Sauvegarde..." : "Enregistrer le profil de l'enfant"}
+        {isSaving ? "Sauvegarde..." : canEditChild ? "Enregistrer le profil de l'enfant" : "Consultation seule"}
        </button>
       </div>
      </section>
