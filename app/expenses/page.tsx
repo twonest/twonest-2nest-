@@ -121,6 +121,8 @@ type ParentNames = {
   parent2: string;
 };
 
+type ExpensesTab = "expenses" | "annual";
+
 const CATEGORIES: ExpenseCategory[] = ["Médical", "Scolaire", "Vêtements", "Activités", "Nourriture", "Autre"];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
 const SHARED_CHILD_KEY = "twonest.selectedChildId";
@@ -372,9 +374,8 @@ export default function ExpensesPage() {
   const [receiptMimeType, setReceiptMimeType] = useState("");
 
   const [selectedMonth, setSelectedMonth] = useState(() => toMonthValue(new Date().toISOString()));
-  const [showAllHistory] = useState(true);
-  const [periodStart, setPeriodStart] = useState("");
-  const [periodEnd, setPeriodEnd] = useState("");
+  const [activeTab, setActiveTab] = useState<ExpensesTab>("expenses");
+  const [isAddExpenseFormOpen, setIsAddExpenseFormOpen] = useState(false);
   const [receiptViewerExpense, setReceiptViewerExpense] = useState<ExpenseItem | null>(null);
   const [contestingReview, setContestingReview] = useState<ExpenseReview | null>(null);
   const [contestReasonInput, setContestReasonInput] = useState("");
@@ -966,6 +967,7 @@ export default function ExpensesPage() {
         URL.revokeObjectURL(receiptPreviewUrl);
       }
       setReceiptPreviewUrl(null);
+      setIsAddExpenseFormOpen(false);
       setToast({ message: "Dépense ajoutée.", variant: "success" });
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Erreur pendant l'ajout de la dépense.");
@@ -1042,45 +1044,8 @@ export default function ExpensesPage() {
   };
 
   const filteredExpenses = useMemo(() => {
-    let scopedExpenses = expenses;
-
-    if (!showAllHistory) {
-      scopedExpenses = expenses.filter((expense) => {
-        const month = toMonthValue(expense.expenseDate);
-        return month === selectedMonth;
-      });
-    }
-
-    const hasPeriodFilter = periodStart.length > 0 || periodEnd.length > 0;
-    if (!hasPeriodFilter) {
-      return scopedExpenses;
-    }
-
-    return scopedExpenses.filter((expense) => {
-      const expenseDateOnly = toDateOnlyValue(expense.expenseDate);
-      if (!expenseDateOnly) {
-        return false;
-      }
-
-      if (periodStart && expenseDateOnly < periodStart) {
-        return false;
-      }
-
-      if (periodEnd && expenseDateOnly > periodEnd) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [expenses, periodEnd, periodStart, selectedMonth, showAllHistory]);
-
-  const monthTotal = useMemo(() => {
-    return filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-  }, [filteredExpenses]);
-
-  const reimbursedTotal = useMemo(() => {
-    return filteredExpenses.reduce((sum, expense) => (expense.reimbursed ? sum + expense.amount : sum), 0);
-  }, [filteredExpenses]);
+    return expenses.filter((expense) => toMonthValue(expense.expenseDate) === selectedMonth);
+  }, [expenses, selectedMonth]);
 
   const balance = useMemo(() => {
     let net = 0;
@@ -1344,153 +1309,34 @@ export default function ExpensesPage() {
       <div className="pointer-events-none absolute right-0 top-1/2 h-72 w-72 -translate-y-1/2 rounded-full bg-[#80B7EA]/20 blur-3xl" />
 
       <main className="relative mx-auto flex w-full max-w-6xl flex-col gap-6 rounded-3xl border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_rgba(38,78,120,0.12)] backdrop-blur-sm sm:p-8">
-        <header className="flex flex-wrap items-center justify-between gap-3">
+        <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">FINANCES</p>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight text-[#17324D]">💸 Dépenses</h1>
           </div>
 
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
-          >
-            ← Retour
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsShareSettingsOpen((current) => !current)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#D0DFEE] bg-white text-lg text-[#365A7B] transition hover:bg-[#F1F7FD]"
+              title="Paramètres de partage"
+              aria-label="Paramètres de partage"
+            >
+              ⚙️
+            </button>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+            >
+              ← Retour
+            </Link>
+          </div>
         </header>
 
-        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
-          <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">ANALYSE</p>
-          <h2 className="mt-1 text-xl font-semibold text-[#17324D]">📊 Tableau de bord annuel</h2>
-
-          <div className="mt-4 flex items-center justify-between rounded-xl border border-[#D0DFEE] bg-[#F8FBFF] px-3 py-2">
-            <button
-              type="button"
-              onClick={() => setSelectedYear((current) => current - 1)}
-              className="rounded-lg px-2 py-1 text-sm font-semibold text-[#365A7B] transition hover:bg-[#EAF2FB]"
-            >
-              ←
-            </button>
-
-            <div className="flex items-center gap-2 text-sm font-semibold text-[#1F4D77]">
-              <button
-                type="button"
-                onClick={() => setSelectedYear((current) => current - 1)}
-                className="rounded-lg px-2 py-1 transition hover:bg-[#EAF2FB]"
-              >
-                {selectedYear - 1}
-              </button>
-              <span>|</span>
-              <button type="button" className="rounded-lg bg-[#E8F2FC] px-2 py-1 text-[#2E6395]">
-                {selectedYear}
-              </button>
-              <span>|</span>
-              <button
-                type="button"
-                onClick={() => setSelectedYear((current) => current + 1)}
-                className="rounded-lg px-2 py-1 transition hover:bg-[#EAF2FB]"
-              >
-                {selectedYear + 1}
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setSelectedYear((current) => current + 1)}
-              className="rounded-lg px-2 py-1 text-sm font-semibold text-[#365A7B] transition hover:bg-[#EAF2FB]"
-            >
-              →
-            </button>
-          </div>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
-              <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">💰 Total annuel</p>
-              <p className="mt-2 text-lg font-semibold text-[#17324D]">{formatCurrency(annualTotals.total)}$</p>
-            </div>
-            <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
-              <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">👤 Qui a payé le plus</p>
-              <p className="mt-2 text-sm font-semibold text-[#17324D]">{annualTopPayerText}</p>
-            </div>
-            <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
-              <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">⚖️ Solde annuel</p>
-              <p className="mt-2 text-sm font-semibold text-[#17324D]">{annualBalanceText}</p>
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
-            <p className="text-xs font-semibold tracking-[0.14em] text-[#5F81A3]">DÉPENSES PAR MOIS</p>
-            <div className="mt-3 h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={annualBarData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#DDEAF7" />
-                  <XAxis dataKey="month" stroke="#5F81A3" />
-                  <YAxis stroke="#5F81A3" tickFormatter={(value) => `${value}$`} />
-                  <Tooltip formatter={(value) => formatTooltipCurrencyValue(value)} />
-                  <Legend />
-                  <Bar dataKey="parent1" name={parentNames.parent1} fill="#4A90D9" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="parent2" name={parentNames.parent2} fill="#50C878" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
-            <p className="text-xs font-semibold tracking-[0.14em] text-[#5F81A3]">RÉPARTITION PAR CATÉGORIE</p>
-            {annualCategoryData.length === 0 ? (
-              <p className="mt-3 text-sm text-[#5E7A95]">Aucune dépense pour {selectedYear}.</p>
-            ) : (
-              <div className="mt-3 grid gap-4 lg:grid-cols-2">
-                <div className="h-72 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={annualCategoryData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={95}>
-                        {annualCategoryData.map((entry) => (
-                          <Cell key={entry.name} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => formatTooltipCurrencyValue(value)} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-
-                <div className="space-y-2">
-                  {annualCategoryData.map((item) => (
-                    <div key={item.name} className="flex items-center justify-between rounded-lg border border-[#D7E6F4] bg-white px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                        <span className="text-sm font-medium text-[#2D4B68]">{item.name}</span>
-                      </div>
-                      <span className="text-sm font-semibold text-[#17324D]">{item.percentage.toFixed(1)}% · {formatCurrency(item.value)}$</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={onExportTaxReport}
-            className="mt-4 w-full rounded-xl border border-[#D0DFEE] bg-[#F1F7FD] px-4 py-3 text-sm font-semibold text-[#2E6395] transition hover:brightness-95"
-          >
-            📥 Exporter pour les impôts
-          </button>
-        </section>
-
-        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
-          <button
-            type="button"
-            onClick={() => setIsShareSettingsOpen((current) => !current)}
-            className="flex w-full items-center justify-between rounded-xl border border-[#D0DFEE] bg-[#F8FBFF] px-4 py-3 text-left transition hover:bg-[#F1F7FD]"
-          >
-            <div>
-              <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">PARAMÈTRES</p>
-              <p className="mt-1 text-base font-semibold text-[#17324D]">⚙️ Paramètres de partage</p>
-            </div>
-            <span className="text-sm font-semibold text-[#365A7B]">{isShareSettingsOpen ? "Masquer" : "Afficher"}</span>
-          </button>
-
-          {isShareSettingsOpen && (
+        {isShareSettingsOpen && (
+          <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+            <h2 className="text-base font-semibold text-[#17324D]">⚙️ Paramètres de partage</h2>
             <div className="mt-3 space-y-3">
               {CATEGORIES.map((categoryName) => {
                 const parent1Pct = clampPercentage(shareRules[categoryName] ?? 50);
@@ -1535,355 +1381,459 @@ export default function ExpensesPage() {
                 {isSavingShareRules ? "Sauvegarde..." : "Sauvegarder l'entente de partage"}
               </button>
             </div>
-          )}
+          </section>
+        )}
+
+        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-2 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab("expenses")}
+              className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                activeTab === "expenses"
+                  ? "bg-[#E8F2FC] text-[#1F4D77]"
+                  : "border border-[#D0DFEE] bg-white text-[#5E7A95] hover:bg-[#F8FBFF]"
+              }`}
+            >
+              📋 Dépenses
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("annual")}
+              className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                activeTab === "annual"
+                  ? "bg-[#E8F2FC] text-[#1F4D77]"
+                  : "border border-[#D0DFEE] bg-white text-[#5E7A95] hover:bg-[#F8FBFF]"
+              }`}
+            >
+              📊 Tableau de bord annuel
+            </button>
+          </div>
         </section>
 
-        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
-          <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">FORMULAIRE D'AJOUT</p>
-          <h2 className="mb-4 mt-1 text-xl font-semibold text-[#17324D]">Ajouter une dépense</h2>
-
-          {formError && (
-            <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{formError}</p>
-          )}
-
-          <form className="grid gap-3 sm:grid-cols-2" onSubmit={onAddExpense}>
-            <div>
-              <label htmlFor="amount" className="mb-1 block text-sm font-medium text-[#2D4B68]">
-                Montant ($)
-              </label>
-              <input
-                id="amount"
-                type="number"
-                min="0"
-                step="0.01"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-                placeholder="0.00"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="description" className="mb-1 block text-sm font-medium text-[#2D4B68]">
-                Description
-              </label>
-              <input
-                id="description"
-                type="text"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-                placeholder="Ex: Pharmacie"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="category" className="mb-1 block text-sm font-medium text-[#2D4B68]">
-                Catégorie
-              </label>
-              <select
-                id="category"
-                value={category}
-                onChange={(event) => setCategory(event.target.value as ExpenseCategory)}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+        {activeTab === "expenses" ? (
+          <>
+            <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+              <button
+                type="button"
+                onClick={() => setIsAddExpenseFormOpen(true)}
+                className="w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-base font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105"
               >
-                {CATEGORIES.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
+                ➕ Ajouter une dépense
+              </button>
 
-            <div>
-              <label htmlFor="paidBy" className="mb-1 block text-sm font-medium text-[#2D4B68]">
-                Payé par
-              </label>
-              <select
-                id="paidBy"
-                value={paidBy}
-                onChange={(event) => setPaidBy(event.target.value as PaidBy)}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-              >
-                <option value="parent1">Parent 1</option>
-                <option value="parent2">Parent 2</option>
-              </select>
-            </div>
+              <div className="mt-4 flex items-center justify-between rounded-xl border border-[#D0DFEE] bg-[#F8FBFF] px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedMonth((current) => shiftMonth(current, -1))}
+                  className="rounded-lg px-2 py-1 text-sm font-semibold text-[#365A7B] transition hover:bg-[#EAF2FB]"
+                >
+                  ←
+                </button>
+                <div className="text-sm font-semibold text-[#1F4D77]">{formatMonthLabel(selectedMonth)}</div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMonth((current) => shiftMonth(current, 1))}
+                  className="rounded-lg px-2 py-1 text-sm font-semibold text-[#365A7B] transition hover:bg-[#EAF2FB]"
+                >
+                  →
+                </button>
+              </div>
+            </section>
 
-            <div className="sm:col-span-2">
-              <label htmlFor="expenseDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
-                Date de la dépense
-              </label>
-              <input
-                id="expenseDate"
-                type="date"
-                value={expenseDate}
-                onChange={(event) => setExpenseDate(event.target.value)}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-              />
-            </div>
+            {isAddExpenseFormOpen && (
+              <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <h2 className="text-xl font-semibold text-[#17324D]">Ajouter une dépense</h2>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddExpenseFormOpen(false)}
+                    className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
+                  >
+                    Fermer
+                  </button>
+                </div>
 
-            <div className="sm:col-span-2 rounded-xl border border-[#D8E4F0] bg-[#F8FBFF] p-3">
-              <label htmlFor="receipt" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-[#E8F2FC] px-4 py-2 text-sm font-semibold text-[#2E6395] transition hover:brightness-95">
-                📎 Ajouter un reçu
-              </label>
-              <input
-                id="receipt"
-                type="file"
-                accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
-                onChange={onReceiptChange}
-                className="hidden"
-              />
-              <p className="mt-2 text-xs text-[#5E7A95]">Formats acceptés: JPG, PNG, PDF</p>
+                {formError && (
+                  <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{formError}</p>
+                )}
 
-              {receiptFile && (
-                <p className="mt-2 text-sm font-medium text-[#2D4B68]">Fichier sélectionné: {receiptFile.name}</p>
+                <form className="grid gap-3 sm:grid-cols-2" onSubmit={onAddExpense}>
+                  <div>
+                    <label htmlFor="amount" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Montant ($)
+                    </label>
+                    <input
+                      id="amount"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={amount}
+                      onChange={(event) => setAmount(event.target.value)}
+                      className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                      placeholder="0.00"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="description" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Description
+                    </label>
+                    <input
+                      id="description"
+                      type="text"
+                      value={description}
+                      onChange={(event) => setDescription(event.target.value)}
+                      className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                      placeholder="Ex: Pharmacie"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="category" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Catégorie
+                    </label>
+                    <select
+                      id="category"
+                      value={category}
+                      onChange={(event) => setCategory(event.target.value as ExpenseCategory)}
+                      className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    >
+                      {CATEGORIES.map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label htmlFor="paidBy" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Payé par
+                    </label>
+                    <select
+                      id="paidBy"
+                      value={paidBy}
+                      onChange={(event) => setPaidBy(event.target.value as PaidBy)}
+                      className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    >
+                      <option value="parent1">Parent 1</option>
+                      <option value="parent2">Parent 2</option>
+                    </select>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label htmlFor="expenseDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">
+                      Date de la dépense
+                    </label>
+                    <input
+                      id="expenseDate"
+                      type="date"
+                      value={expenseDate}
+                      onChange={(event) => setExpenseDate(event.target.value)}
+                      className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 rounded-xl border border-[#D8E4F0] bg-[#F8FBFF] p-3">
+                    <label htmlFor="receipt" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-[#E8F2FC] px-4 py-2 text-sm font-semibold text-[#2E6395] transition hover:brightness-95">
+                      📎 Ajouter un reçu
+                    </label>
+                    <input
+                      id="receipt"
+                      type="file"
+                      accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+                      onChange={onReceiptChange}
+                      className="hidden"
+                    />
+                    <p className="mt-2 text-xs text-[#5E7A95]">Formats acceptés: JPG, PNG, PDF</p>
+
+                    {receiptFile && (
+                      <p className="mt-2 text-sm font-medium text-[#2D4B68]">Fichier sélectionné: {receiptFile.name}</p>
+                    )}
+
+                    {receiptPreviewUrl && receiptMimeType.startsWith("image/") && (
+                      <div className="mt-3 overflow-hidden rounded-xl border border-[#D0DFEE] bg-white p-2">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={receiptPreviewUrl} alt="Aperçu du reçu" className="max-h-52 w-auto rounded-lg object-contain" />
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isCreatingExpense}
+                    className="sm:col-span-2 mt-1 w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {isCreatingExpense ? "Ajout..." : "Ajouter la dépense"}
+                  </button>
+                </form>
+              </section>
+            )}
+
+            <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+              {listError && (
+                <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{listError}</p>
               )}
 
-              {receiptPreviewUrl && receiptMimeType.startsWith("image/") && (
-                <div className="mt-3 overflow-hidden rounded-xl border border-[#D0DFEE] bg-white p-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={receiptPreviewUrl} alt="Aperçu du reçu" className="max-h-52 w-auto rounded-lg object-contain" />
+              <div className="space-y-3">
+                {filteredExpenses.length === 0 ? (
+                  <p className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] px-4 py-3 text-sm text-[#4A6783]">
+                    Aucune dépense pour {formatMonthLabel(selectedMonth)}.
+                  </p>
+                ) : (
+                  filteredExpenses.map((expense) => (
+                    <article key={expense.id} className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-4">
+                      {(() => {
+                        const review = reviewByExpenseId.get(expense.id);
+                        const reviewStatus = review?.status ?? "pending";
+                        const statusClass =
+                          reviewStatus === "approved"
+                            ? "border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]"
+                            : reviewStatus === "contested"
+                              ? "border-[#E3B4B8] bg-[#FFF4F5] text-[#8D3E45]"
+                              : "border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]";
+
+                        return (
+                          <div className="mb-3 space-y-1">
+                            <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusClass}`}>
+                              {reviewStatus === "approved" ? "✅ Approuvée" : reviewStatus === "contested" ? "❌ Contestée" : "🟡 En attente"}
+                            </span>
+                            <p className="text-xs text-[#5E7A95]">
+                              Demande créée le {new Date(review?.createdAt ?? expense.expenseDate).toLocaleString("fr-CA")}
+                              {review?.reviewedAt ? ` · Décision le ${new Date(review.reviewedAt).toLocaleString("fr-CA")}` : ""}
+                            </p>
+                            {review?.contestReason && <p className="text-xs font-medium text-[#8D3E45]">Raison: {review.contestReason}</p>}
+                          </div>
+                        );
+                      })()}
+
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-lg font-semibold text-[#17324D]">{formatCurrency(expense.amount)}$</p>
+                          <p className="mt-1 text-sm font-medium text-[#2D4B68]">{expense.description}</p>
+                          <p className="mt-1 text-xs text-[#5E7A95]">
+                            {expense.category} · {new Date(expense.expenseDate).toLocaleDateString("fr-CA")}
+                          </p>
+                        </div>
+
+                        <div className="text-right">
+                          <p className="text-xs font-semibold text-[#5F81A3]">Payé par</p>
+                          <p className={`mt-1 rounded-full px-3 py-1 text-xs font-semibold ${
+                            expense.paidBy === "parent1"
+                              ? "bg-[#E8F2FC] text-[#2E6395]"
+                              : "bg-[#E9F8EE] text-[#2D6940]"
+                          }`}>
+                            {expense.paidBy === "parent1" ? "Parent 1" : "Parent 2"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                              expense.reimbursed
+                                ? "border border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]"
+                                : "border border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]"
+                            }`}
+                          >
+                            {expense.reimbursed ? "Remboursé" : "Non remboursé"}
+                          </span>
+                          {expense.receiptUrl && getReceiptType(expense.receiptUrl) !== "pdf" && (
+                            <button
+                              type="button"
+                              onClick={() => openReceiptViewer(expense)}
+                              className="overflow-hidden rounded-lg border border-[#D0DFEE] bg-white transition hover:brightness-95"
+                              title="Ouvrir la photo du reçu"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={expense.receiptUrl}
+                                alt="Miniature du reçu"
+                                className="h-[60px] w-[60px] object-cover"
+                              />
+                            </button>
+                          )}
+
+                          {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "pdf" && (
+                            <a
+                              href={expense.receiptUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-full border border-[#D0DFEE] bg-white px-3 py-1 text-xs font-semibold text-[#2E6395] transition hover:bg-[#F3F8FD]"
+                              title="Ouvrir le reçu PDF"
+                            >
+                              📄 Reçu PDF
+                            </a>
+                          )}
+
+                          {!expense.receiptUrl && (
+                            <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {!expense.reimbursed && (
+                            <button
+                              type="button"
+                              onClick={() => onMarkReimbursed(expense.id)}
+                              disabled={isMarkingReimbursed || deletingExpenseId === expense.id}
+                              className="rounded-xl bg-[#4A90D9] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              Marquer comme remboursé
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => onDeleteExpense(expense)}
+                            disabled={deletingExpenseId === expense.id || isMarkingReimbursed}
+                            className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm font-semibold text-[#8D3E45] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
+                          >
+                            {deletingExpenseId === expense.id ? "Suppression..." : "Supprimer"}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAddExpenseFormOpen(true)}
+                className="mt-4 w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-base font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105"
+              >
+                ➕ Ajouter une dépense
+              </button>
+
+              <div className="mt-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
+                <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">SOLDE ACTUEL</p>
+                <p className="mt-2 text-sm font-semibold text-[#17324D]">{balanceText}</p>
+              </div>
+            </section>
+          </>
+        ) : (
+          <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
+            <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">ANALYSE</p>
+            <h2 className="mt-1 text-xl font-semibold text-[#17324D]">📊 Tableau de bord annuel</h2>
+
+            <div className="mt-4 flex items-center justify-between rounded-xl border border-[#D0DFEE] bg-[#F8FBFF] px-3 py-2">
+              <button
+                type="button"
+                onClick={() => setSelectedYear((current) => current - 1)}
+                className="rounded-lg px-2 py-1 text-sm font-semibold text-[#365A7B] transition hover:bg-[#EAF2FB]"
+              >
+                ←
+              </button>
+
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#1F4D77]">
+                <button
+                  type="button"
+                  onClick={() => setSelectedYear((current) => current - 1)}
+                  className="rounded-lg px-2 py-1 transition hover:bg-[#EAF2FB]"
+                >
+                  {selectedYear - 1}
+                </button>
+                <span>|</span>
+                <button type="button" className="rounded-lg bg-[#E8F2FC] px-2 py-1 text-[#2E6395]">
+                  {selectedYear}
+                </button>
+                <span>|</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedYear((current) => current + 1)}
+                  className="rounded-lg px-2 py-1 transition hover:bg-[#EAF2FB]"
+                >
+                  {selectedYear + 1}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedYear((current) => current + 1)}
+                className="rounded-lg px-2 py-1 text-sm font-semibold text-[#365A7B] transition hover:bg-[#EAF2FB]"
+              >
+                →
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+                <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">💰 Total annuel</p>
+                <p className="mt-2 text-lg font-semibold text-[#17324D]">{formatCurrency(annualTotals.total)}$</p>
+              </div>
+              <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+                <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">👤 Qui a payé le plus</p>
+                <p className="mt-2 text-sm font-semibold text-[#17324D]">{annualTopPayerText}</p>
+              </div>
+              <div className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+                <p className="text-xs font-semibold tracking-[0.12em] text-[#5F81A3]">⚖️ Solde annuel</p>
+                <p className="mt-2 text-sm font-semibold text-[#17324D]">{annualBalanceText}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+              <p className="text-xs font-semibold tracking-[0.14em] text-[#5F81A3]">DÉPENSES PAR MOIS</p>
+              <div className="mt-3 h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={annualBarData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#DDEAF7" />
+                    <XAxis dataKey="month" stroke="#5F81A3" />
+                    <YAxis stroke="#5F81A3" tickFormatter={(value) => `${value}$`} />
+                    <Tooltip formatter={(value) => formatTooltipCurrencyValue(value)} />
+                    <Legend />
+                    <Bar dataKey="parent1" name={parentNames.parent1} fill="#4A90D9" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="parent2" name={parentNames.parent2} fill="#50C878" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-3">
+              <p className="text-xs font-semibold tracking-[0.14em] text-[#5F81A3]">RÉPARTITION PAR CATÉGORIE</p>
+              {annualCategoryData.length === 0 ? (
+                <p className="mt-3 text-sm text-[#5E7A95]">Aucune dépense pour {selectedYear}.</p>
+              ) : (
+                <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                  <div className="h-72 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={annualCategoryData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={95}>
+                          {annualCategoryData.map((entry) => (
+                            <Cell key={entry.name} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value) => formatTooltipCurrencyValue(value)} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="space-y-2">
+                    {annualCategoryData.map((item) => (
+                      <div key={item.name} className="flex items-center justify-between rounded-lg border border-[#D7E6F4] bg-white px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                          <span className="text-sm font-medium text-[#2D4B68]">{item.name}</span>
+                        </div>
+                        <span className="text-sm font-semibold text-[#17324D]">{item.percentage.toFixed(1)}% · {formatCurrency(item.value)}$</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
 
             <button
-              type="submit"
-              disabled={isCreatingExpense}
-              className="sm:col-span-2 mt-1 w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+              type="button"
+              onClick={onExportTaxReport}
+              className="mt-4 w-full rounded-xl border border-[#D0DFEE] bg-[#F1F7FD] px-4 py-3 text-sm font-semibold text-[#2E6395] transition hover:brightness-95"
             >
-              {isCreatingExpense ? "Ajout..." : "Ajouter la dépense"}
+              📥 Exporter pour les impôts
             </button>
-          </form>
-        </section>
-
-        <section className="rounded-2xl border border-[#D7E6F4] bg-white p-4 shadow-[0_10px_28px_rgba(74,144,217,0.08)] sm:p-5">
-          <p className="text-xs font-semibold tracking-[0.2em] text-[#5F81A3]">TABLEAU DE BORD DES DÉPENSES</p>
-          <h2 className="mb-3 mt-1 text-xl font-semibold text-[#17324D]">Suivi et remboursements</h2>
-
-          {pendingNotifications.length > 0 && (
-            <div className="mb-4 rounded-2xl border border-[#D0DFEE] bg-[#F6FAFF] p-3">
-              <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">NOTIFICATIONS</p>
-              <div className="mt-2 space-y-2">
-                {pendingNotifications.map((review) => {
-                  const linkedExpense = expenses.find((expense) => expense.id === review.expenseId);
-                  if (!linkedExpense) {
-                    return null;
-                  }
-
-                  return (
-                    <div key={review.id} className="rounded-xl border border-[#D7E6F4] bg-white p-3">
-                      <p className="text-sm font-semibold text-[#17324D]">
-                        Nouvelle dépense à valider: {linkedExpense.description} ({formatCurrency(linkedExpense.amount)}$)
-                      </p>
-                      <p className="mt-1 text-xs text-[#5E7A95]">
-                        Soumise le {new Date(review.createdAt ?? linkedExpense.expenseDate).toLocaleString("fr-CA")}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onApproveExpense(review)}
-                          disabled={isSubmittingReview}
-                          className="rounded-xl bg-[#50C878] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          ✅ Approuver
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openContestModal(review)}
-                          disabled={isSubmittingReview}
-                          className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm font-semibold text-[#8D3E45] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          ❌ Contester
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <div className="mb-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
-            <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">HISTORIQUE</p>
-            <p className="mt-1 text-lg font-semibold text-[#1F4D77]">Toutes les dépenses</p>
-          </div>
-
-          <div className="mb-4 rounded-2xl border border-[#D7E6F4] bg-[#F8FBFF] p-3">
-            <p className="mb-2 text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">PÉRIODE</p>
-            <div className="grid gap-2 sm:grid-cols-3">
-              <input
-                type="date"
-                value={periodStart}
-                onChange={(event) => setPeriodStart(event.target.value)}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-sm text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-                aria-label="Date de début"
-              />
-              <input
-                type="date"
-                value={periodEnd}
-                onChange={(event) => setPeriodEnd(event.target.value)}
-                className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-sm text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-                aria-label="Date de fin"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setPeriodStart("");
-                  setPeriodEnd("");
-                }}
-                className="rounded-xl border border-[#D0DFEE] bg-white px-3 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
-              >
-                Effacer la période
-              </button>
-            </div>
-          </div>
-
-          {listError && (
-            <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-3 text-sm text-[#8D3E45]">{listError}</p>
-          )}
-
-          <div className="space-y-3">
-            {filteredExpenses.length === 0 ? (
-              <p className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] px-4 py-3 text-sm text-[#4A6783]">
-                {showAllHistory
-                  ? "Aucune dépense enregistrée pour le moment."
-                  : `Aucune dépense pour ${formatMonthLabel(selectedMonth)}.`}
-              </p>
-            ) : (
-              filteredExpenses.map((expense) => (
-                <article key={expense.id} className="rounded-xl border border-[#D7E6F4] bg-[#FAFCFF] p-4">
-                  {(() => {
-                    const review = reviewByExpenseId.get(expense.id);
-                    const reviewStatus = review?.status ?? "pending";
-                    const statusClass =
-                      reviewStatus === "approved"
-                        ? "border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]"
-                        : reviewStatus === "contested"
-                          ? "border-[#E3B4B8] bg-[#FFF4F5] text-[#8D3E45]"
-                          : "border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]";
-
-                    return (
-                      <div className="mb-3 space-y-1">
-                        <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusClass}`}>
-                          {reviewStatus === "approved" ? "✅ Approuvée" : reviewStatus === "contested" ? "❌ Contestée" : "🟡 En attente"}
-                        </span>
-                        <p className="text-xs text-[#5E7A95]">
-                          Demande créée le {new Date(review?.createdAt ?? expense.expenseDate).toLocaleString("fr-CA")}
-                          {review?.reviewedAt ? ` · Décision le ${new Date(review.reviewedAt).toLocaleString("fr-CA")}` : ""}
-                        </p>
-                        {review?.contestReason && <p className="text-xs font-medium text-[#8D3E45]">Raison: {review.contestReason}</p>}
-                      </div>
-                    );
-                  })()}
-
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-lg font-semibold text-[#17324D]">{formatCurrency(expense.amount)}$</p>
-                      <p className="mt-1 text-sm font-medium text-[#2D4B68]">{expense.description}</p>
-                      <p className="mt-1 text-xs text-[#5E7A95]">
-                        {expense.category} · {new Date(expense.expenseDate).toLocaleDateString("fr-CA")}
-                      </p>
-                      <p className="mt-1 text-xs font-medium text-[#365A7B]">
-                        Parent 1 doit {formatCurrency(expense.parent1ShareAmount ?? expense.amount / 2)}$ | Parent 2 doit {formatCurrency(expense.parent2ShareAmount ?? expense.amount / 2)}$
-                      </p>
-                    </div>
-
-                    <div className="text-right">
-                      <p className="text-xs font-semibold text-[#5F81A3]">Payé par</p>
-                      <p className={`mt-1 rounded-full px-3 py-1 text-xs font-semibold ${
-                        expense.paidBy === "parent1"
-                          ? "bg-[#E8F2FC] text-[#2E6395]"
-                          : "bg-[#E9F8EE] text-[#2D6940]"
-                      }`}>
-                        {expense.paidBy === "parent1" ? "Parent 1" : "Parent 2"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                          expense.reimbursed
-                            ? "border border-[#BDDCC5] bg-[#F2FAF4] text-[#2D6940]"
-                            : "border border-[#F5E4A8] bg-[#FFF9E8] text-[#8A6A00]"
-                        }`}
-                      >
-                        {expense.reimbursed ? "Remboursé" : "Non remboursé"}
-                      </span>
-                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) !== "pdf" && (
-                        <button
-                          type="button"
-                          onClick={() => openReceiptViewer(expense)}
-                          className="overflow-hidden rounded-lg border border-[#D0DFEE] bg-white transition hover:brightness-95"
-                          title="Ouvrir la photo du reçu"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={expense.receiptUrl}
-                            alt="Miniature du reçu"
-                            className="h-[60px] w-[60px] object-cover"
-                          />
-                        </button>
-                      )}
-
-                      {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "pdf" && (
-                        <a
-                          href={expense.receiptUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-full border border-[#D0DFEE] bg-white px-3 py-1 text-xs font-semibold text-[#2E6395] transition hover:bg-[#F3F8FD]"
-                          title="Ouvrir le reçu PDF"
-                        >
-                          📄 Reçu PDF
-                        </a>
-                      )}
-
-                      {!expense.receiptUrl && (
-                        <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>
-                      )}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      {!expense.reimbursed && (
-                        <button
-                          type="button"
-                          onClick={() => onMarkReimbursed(expense.id)}
-                          disabled={isMarkingReimbursed || deletingExpenseId === expense.id}
-                          className="rounded-xl bg-[#4A90D9] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          Marquer comme remboursé
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => onDeleteExpense(expense)}
-                        disabled={deletingExpenseId === expense.id || isMarkingReimbursed}
-                        className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm font-semibold text-[#8D3E45] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {deletingExpenseId === expense.id ? "Suppression..." : "Supprimer"}
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-[#CFE1F2] bg-[#F4F9FF] px-4 py-3">
-            <p className="text-xs font-semibold tracking-[0.18em] text-[#5F81A3]">
-              RÉCAPITULATIF {showAllHistory ? "GLOBAL" : `DE ${formatMonthLabel(selectedMonth).toUpperCase()}`}
-            </p>
-            <div className="mt-2 grid gap-2 text-sm text-[#2D4B68] sm:grid-cols-3">
-              <p>Total des dépenses: <span className="font-semibold text-[#17324D]">{formatCurrency(monthTotal)}$</span></p>
-              <p>Total remboursé: <span className="font-semibold text-[#17324D]">{formatCurrency(reimbursedTotal)}$</span></p>
-              <p>Solde restant: <span className="font-semibold text-[#17324D]">{balanceText}</span></p>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
       </main>
 
       {receiptViewerExpense?.receiptUrl && (
