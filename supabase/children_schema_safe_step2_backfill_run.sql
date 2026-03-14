@@ -248,6 +248,7 @@ begin
     with candidates as (
       select
         t.id as row_id,
+        c.id as resolved_child_id,
         trim(concat_ws(' ', c.first_name, c.last_name)) as resolved_child_name,
         case
           when lower(trim(coalesce(t.child_name, t.enfant, ''))) = lower(trim(concat_ws(' ', c.first_name, c.last_name))) then 2
@@ -267,6 +268,7 @@ begin
     ranked as (
       select
         row_id,
+        resolved_child_id,
         resolved_child_name,
         score,
         row_number() over (partition by row_id order by score desc) as rn,
@@ -275,7 +277,8 @@ begin
       where score > 0
     )
     update public.%I t
-    set child_name = coalesce(nullif(trim(t.child_name), ''), nullif(trim(r.resolved_child_name), '')),
+    set child_id = coalesce(t.child_id, r.resolved_child_id),
+      child_name = coalesce(nullif(trim(t.child_name), ''), nullif(trim(r.resolved_child_name), '')),
         enfant = coalesce(nullif(trim(t.enfant), ''), nullif(trim(t.child_name), ''), nullif(trim(r.resolved_child_name), ''))
     from ranked r
     where t.id = r.row_id
