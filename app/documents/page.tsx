@@ -405,8 +405,11 @@ export default function DocumentsPage() {
 
       let payload: Record<string, unknown> = {
         title: docTitle.trim(),
+        titre: docTitle.trim(),
         category: docCategory,
+        categorie: docCategory,
         child_name: docChildName.trim() || null,
+        enfant: docChildName.trim() || null,
         description: docDescription.trim() || null,
         file_path: filePath,
         fichier_url: publicUrl,
@@ -420,7 +423,6 @@ export default function DocumentsPage() {
         shared_with_legal: shareWithLegal,
       };
 
-      const protectedColumns = new Set(["fichier_url", "file_url", "file_path", "title", "category", "user_id"]);
       let insertError: string | null = null;
       for (let attempt = 0; attempt < 12; attempt += 1) {
         const result = await supabase.from("documents").insert(payload).select("*").maybeSingle();
@@ -431,11 +433,7 @@ export default function DocumentsPage() {
         }
 
         const missingColumn = extractMissingColumn(result.error.message);
-        if (
-          missingColumn &&
-          Object.prototype.hasOwnProperty.call(payload, missingColumn) &&
-          !protectedColumns.has(missingColumn)
-        ) {
+        if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
           const nextPayload = { ...payload };
           delete nextPayload[missingColumn];
           payload = nextPayload;
