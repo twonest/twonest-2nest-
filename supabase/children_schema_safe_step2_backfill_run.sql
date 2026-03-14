@@ -305,9 +305,32 @@ begin
 end;
 $$;
 
-select public.backfill_child_links('events');
-select public.backfill_child_links('expenses');
-select public.backfill_child_links('documents');
+do $$
+begin
+  perform public.backfill_child_links('events');
+exception
+  when invalid_text_representation then
+    raise notice 'Backfill children skipped for events (invalid legacy UUID/text values): %', sqlerrm;
+end;
+$$;
+
+do $$
+begin
+  perform public.backfill_child_links('expenses');
+exception
+  when invalid_text_representation then
+    raise notice 'Backfill children skipped for expenses (invalid legacy UUID/text values): %', sqlerrm;
+end;
+$$;
+
+do $$
+begin
+  perform public.backfill_child_links('documents');
+exception
+  when invalid_text_representation then
+    raise notice 'Backfill children skipped for documents (invalid legacy UUID/text values): %', sqlerrm;
+end;
+$$;
 
 drop function if exists public.backfill_child_links(text);
 
