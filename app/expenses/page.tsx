@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, Eye, PlusCircle, Settings, Trash2 } from "lucide-react";
 import jsPDF from "jspdf";
 import {
  Bar,
@@ -1323,13 +1324,14 @@ export default function ExpensesPage() {
        title="Paramètres de partage"
        aria-label="Paramètres de partage"
       >
-       
+      <Settings size={16} />
       </button>
       <Link
        href="/dashboard"
        className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
       >
-       ← Retour
+        <ArrowLeft size={16} className="mr-2" />
+        Retour
       </Link>
      </div>
     </header>
@@ -1419,7 +1421,8 @@ export default function ExpensesPage() {
         onClick={() => setIsAddExpenseFormOpen(true)}
         className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
        >
-         Ajouter une dépense
+          <PlusCircle size={16} className="mr-2 inline-flex" />
+          Ajouter une dépense
        </button>
 
        <div className="mt-4 flex items-center justify-between rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2">
@@ -1428,7 +1431,7 @@ export default function ExpensesPage() {
          onClick={() => setSelectedMonth((current) => shiftMonth(current, -1))}
          className="rounded-lg px-2 py-1 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
         >
-         ←
+         <ChevronLeft size={16} />
         </button>
         <div className="text-sm font-semibold text-[#6B5D55]">{formatMonthLabel(selectedMonth)}</div>
         <button
@@ -1436,7 +1439,7 @@ export default function ExpensesPage() {
          onClick={() => setSelectedMonth((current) => shiftMonth(current, 1))}
          className="rounded-lg px-2 py-1 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
         >
-         →
+         <ChevronRight size={16} />
         </button>
        </div>
       </section>
@@ -1537,6 +1540,7 @@ export default function ExpensesPage() {
 
          <div className="sm:col-span-2 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
           <label htmlFor="receipt" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-[#EDE8E3] px-4 py-2 text-sm font-semibold text-[#7C6B5D] transition hover:brightness-95">
+            <PlusCircle size={14} className="mr-2" />
             Ajouter un reçu
           </label>
           <input
@@ -1664,6 +1668,7 @@ export default function ExpensesPage() {
                className="rounded-full border border-[#D9D0C8] bg-white px-3 py-1 text-xs font-semibold text-[#7C6B5D] transition hover:bg-[#F5F0EB]"
                title="Ouvrir le reçu PDF"
               >
+                <Download size={12} className="mr-1 inline-flex" />
                 Reçu PDF
               </a>
              )}
@@ -1691,7 +1696,8 @@ export default function ExpensesPage() {
               disabled={deletingExpenseId === expense.id || isMarkingReimbursed}
               className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm font-semibold text-[#A85C52] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
              >
-              {deletingExpenseId === expense.id ? "Suppression..." : "Supprimer"}
+                <Trash2 size={14} className="mr-2 inline-flex" />
+                {deletingExpenseId === expense.id ? "Suppression..." : "Supprimer"}
              </button>
             </div>
            </div>
@@ -1705,7 +1711,8 @@ export default function ExpensesPage() {
         onClick={() => setIsAddExpenseFormOpen(true)}
         className="mt-4 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
        >
-         Ajouter une dépense
+          <PlusCircle size={16} className="mr-2 inline-flex" />
+          Ajouter une dépense
        </button>
 
        <div className="mt-4 rounded-2xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3">
@@ -1725,7 +1732,7 @@ export default function ExpensesPage() {
         onClick={() => setSelectedYear((current) => current - 1)}
         className="rounded-lg px-2 py-1 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
-        ←
+        <ChevronLeft size={16} />
        </button>
 
        <div className="flex items-center gap-2 text-sm font-semibold text-[#6B5D55]">
@@ -1755,7 +1762,7 @@ export default function ExpensesPage() {
         onClick={() => setSelectedYear((current) => current + 1)}
         className="rounded-lg px-2 py-1 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
-        →
+          <ChevronRight size={16} />
        </button>
       </div>
 
@@ -1830,6 +1837,7 @@ export default function ExpensesPage() {
        onClick={onExportTaxReport}
        className="mt-4 w-full rounded-xl border border-[#D9D0C8] bg-[#EDE8E3] px-4 py-3 text-sm font-semibold text-[#7C6B5D] transition hover:brightness-95"
       >
+        <Download size={16} className="mr-2 inline-flex" />
         Exporter pour les impôts
       </button>
      </section>

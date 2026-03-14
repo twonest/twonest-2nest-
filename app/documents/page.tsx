@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import { ArrowLeft, Download, Eye, FileText, PlusCircle, Trash2, X } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type ParentRole = "parent1" | "parent2";
@@ -11,7 +12,6 @@ type DocumentCategory = "medical" | "scolaire" | "legal" | "assurances" | "autre
 
 type CategoryTab = {
  key: "all" | DocumentCategory;
- emoji: string;
  label: string;
 };
 
@@ -69,20 +69,20 @@ type ToastState = {
 };
 
 const CATEGORY_TABS: CategoryTab[] = [
- { key: "all", emoji: "", label: "Tous" },
- { key: "medical", emoji: "", label: "Médical / Dentaire" },
- { key: "scolaire", emoji: "", label: "Scolaire" },
- { key: "legal", emoji: "", label: "Légal / Jugement" },
- { key: "assurances", emoji: "", label: "Assurances" },
- { key: "autres", emoji: "", label: "Autres" },
+ { key: "all", label: "Tous" },
+ { key: "medical", label: "Médical / Dentaire" },
+ { key: "scolaire", label: "Scolaire" },
+ { key: "legal", label: "Légal / Jugement" },
+ { key: "assurances", label: "Assurances" },
+ { key: "autres", label: "Autres" },
 ];
 
 const CATEGORY_OPTIONS: Array<{ value: DocumentCategory; label: string }> = [
- { value: "medical", label: " Médical / Dentaire" },
- { value: "scolaire", label: " Scolaire" },
- { value: "legal", label: " Légal / Jugement" },
- { value: "assurances", label: " Assurances" },
- { value: "autres", label: " Autres" },
+ { value: "medical", label: "Médical / Dentaire" },
+ { value: "scolaire", label: "Scolaire" },
+ { value: "legal", label: "Légal / Jugement" },
+ { value: "assurances", label: "Assurances" },
+ { value: "autres", label: "Autres" },
 ];
 const SHARED_CHILD_KEY = "twonest.selectedChildId";
 const SHARED_CHILD_NAME_KEY = "twonest.selectedChildName";
@@ -111,7 +111,7 @@ function normalizeCategory(value: string | null | undefined): DocumentCategory {
 
 function categoryLabel(category: DocumentCategory): string {
  const option = CATEGORY_OPTIONS.find((item) => item.value === category);
- return option ? option.label : " Autres";
+ return option ? option.label : "Autres";
 }
 
 function formatDateTimeLabel(value: string): string {
@@ -126,17 +126,6 @@ function formatDateTimeLabel(value: string): string {
   hour: "2-digit",
   minute: "2-digit",
  });
-}
-
-function fileIcon(mimeType: string | null): string {
- const normalized = (mimeType ?? "").toLowerCase();
- if (normalized.includes("pdf")) {
-  return "";
- }
- if (normalized.startsWith("image/")) {
-  return "";
- }
- return "";
 }
 
 function extractMissingColumn(message: string): string | null {
@@ -590,7 +579,8 @@ export default function DocumentsPage() {
        href="/dashboard"
        className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
       >
-       ← Retour
+        <ArrowLeft size={16} className="mr-2" />
+        Retour
       </Link>
       <button
        type="button"
@@ -600,6 +590,7 @@ export default function DocumentsPage() {
        }}
        className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
       >
+        <PlusCircle size={16} className="mr-2" />
         Ajouter un document
       </button>
      </div>
@@ -620,7 +611,7 @@ export default function DocumentsPage() {
            : "border-[#D9D0C8] bg-white text-[#6B5D55] hover:bg-[#EDE8E3]"
          }`}
         >
-         {tab.emoji} {tab.label}
+         {tab.label}
         </button>
        );
       })}
@@ -662,7 +653,7 @@ export default function DocumentsPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
            <div className="min-w-[220px] flex-1">
             <p className="text-base font-semibold text-[#2C2420]">
-             <span className="mr-2">{fileIcon(item.mimeType)}</span>
+             <FileText size={16} className="mr-2 inline-flex" />
              {item.title}
             </p>
             <p className="mt-1 text-sm text-[#6B5D55]">{categoryLabel(item.category)}</p>
@@ -684,14 +675,16 @@ export default function DocumentsPage() {
              rel="noreferrer"
              className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-3 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
             >
-             👁️ Voir
+               <Eye size={15} className="mr-2" />
+               Voir
             </a>
             <a
              href={item.fileUrl}
              download
              className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-3 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
             >
-             ⬇️ Télécharger
+               <Download size={15} className="mr-2" />
+               Télécharger
             </a>
             {canDelete && (
              <button
@@ -702,7 +695,8 @@ export default function DocumentsPage() {
               disabled={isDeletingId === item.id}
               className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm font-semibold text-[#A85C52] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
              >
-              {isDeletingId === item.id ? "Suppression..." : "🗑️ Supprimer"}
+                <Trash2 size={15} className="mr-2" />
+                {isDeletingId === item.id ? "Suppression..." : "Supprimer"}
              </button>
             )}
            </div>
@@ -719,7 +713,7 @@ export default function DocumentsPage() {
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
       <div className="mb-4 flex items-center justify-between">
-       <h2 className="text-xl font-semibold text-[#2C2420]"> Ajouter un document</h2>
+      <h2 className="text-xl font-semibold text-[#2C2420]">Ajouter un document</h2>
        <button
         type="button"
         onClick={() => {
@@ -731,7 +725,7 @@ export default function DocumentsPage() {
         }}
         className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
        >
-        ✕
+        <X size={14} />
        </button>
       </div>
 

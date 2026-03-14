@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import { ArrowLeft, UserCircle } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type ParentRole = "parent1" | "parent2";
@@ -423,7 +424,8 @@ export default function ProfilePage() {
       href="/dashboard"
       className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
      >
-      ← Retour
+      <ArrowLeft size={16} className="mr-2" />
+      Retour
      </Link>
     </header>
 
@@ -442,7 +444,7 @@ export default function ProfilePage() {
          // eslint-disable-next-line @next/next/no-img-element
          <img src={profile.avatarUrl} alt="Photo de profil" className="h-full w-full object-cover" />
         ) : (
-         <div className="flex h-full w-full items-center justify-center text-2xl"></div>
+         <div className="flex h-full w-full items-center justify-center text-[#6B5D55]"><UserCircle size={26} /></div>
         )}
        </div>
        <div className="flex-1">

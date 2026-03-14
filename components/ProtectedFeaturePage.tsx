@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type ProtectedFeaturePageProps = {
@@ -83,7 +84,8 @@ export default function ProtectedFeaturePage({ title }: ProtectedFeaturePageProp
       href="/dashboard"
       className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
      >
-      ← Retour
+      <ArrowLeft size={16} className="mr-2" />
+      Retour
      </Link>
     </header>
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import { ArrowLeft, Eye, PlusCircle, Trash2, UserCircle, X } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type ParentRole = "parent1" | "parent2";
@@ -716,7 +717,8 @@ export default function ChildrenPage() {
        href="/dashboard"
        className="inline-flex items-center justify-center rounded-xl border border-[#E7D8C8] px-4 py-2 text-sm font-semibold text-[#7A5E45] transition hover:bg-[#FFF5E9]"
       >
-       ← Retour
+        <ArrowLeft size={16} className="mr-2" />
+        Retour
       </Link>
       <button
        type="button"
@@ -728,6 +730,7 @@ export default function ChildrenPage() {
        }}
        className="inline-flex items-center justify-center rounded-xl bg-[#F59E66] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(245,158,102,0.35)] transition hover:brightness-105"
       >
+        <PlusCircle size={16} className="mr-2" />
         Ajouter un enfant
       </button>
      </div>
@@ -761,7 +764,7 @@ export default function ChildrenPage() {
            // eslint-disable-next-line @next/next/no-img-element
            <img src={child.photoUrl} alt={displayName} className="h-full w-full object-cover" />
           ) : (
-           <div className="flex h-full w-full items-center justify-center text-lg">🧒</div>
+           <div className="flex h-full w-full items-center justify-center text-[#7A5E45]"><UserCircle size={20} /></div>
           )}
          </div>
          <div>
@@ -808,10 +811,10 @@ export default function ChildrenPage() {
 
       <div className="mb-4 flex flex-wrap gap-2">
        {[
-        { key: "infos", label: " Infos générales" },
-        { key: "sante", label: " Santé" },
-        { key: "urgence", label: "🆘 Contacts d'urgence" },
-        { key: "documents", label: " Documents de l'enfant" },
+      { key: "infos", label: "Infos générales" },
+      { key: "sante", label: "Santé" },
+      { key: "urgence", label: "Contacts d'urgence" },
+      { key: "documents", label: "Documents de l'enfant" },
        ].map((tab) => (
         <button
          key={tab.key}
@@ -836,7 +839,7 @@ export default function ChildrenPage() {
            // eslint-disable-next-line @next/next/no-img-element
            <img src={selectedChild.photoUrl} alt="Photo enfant" className="h-full w-full object-cover" />
           ) : (
-           <div className="flex h-full w-full items-center justify-center text-2xl">🧒</div>
+           <div className="flex h-full w-full items-center justify-center text-[#7A5E45]"><UserCircle size={24} /></div>
           )}
          </div>
 
@@ -1020,6 +1023,7 @@ export default function ChildrenPage() {
          onClick={onAddEmergencyContact}
          className="rounded-xl border border-[#E7D8C8] bg-[#FFF8EF] px-3 py-2 text-sm font-semibold text-[#7A5E45]"
         >
+          <PlusCircle size={14} className="mr-2 inline-flex" />
           Ajouter un contact
         </button>
 
@@ -1038,6 +1042,7 @@ export default function ChildrenPage() {
              onClick={() => onDeleteEmergencyContact(contact.id)}
              className="rounded-lg border border-[#EAC8C8] bg-[#F5F0EB] px-2 py-1 text-xs font-semibold text-[#A85C52]"
             >
+             <Trash2 size={12} className="mr-1 inline-flex" />
              Supprimer
             </button>
            </div>
@@ -1055,7 +1060,8 @@ export default function ChildrenPage() {
           href="/documents"
           className="rounded-xl border border-[#E7D8C8] bg-[#FFF8EF] px-3 py-2 text-sm font-semibold text-[#7A5E45]"
          >
-           Ajouter un document
+             <PlusCircle size={14} className="mr-2 inline-flex" />
+             Ajouter un document
          </Link>
         </div>
 
@@ -1076,7 +1082,8 @@ export default function ChildrenPage() {
             rel="noreferrer"
             className="rounded-xl border border-[#E7D8C8] bg-white px-3 py-2 text-sm font-semibold text-[#7A5E45]"
            >
-            👁️ Voir
+              <Eye size={14} className="mr-2 inline-flex" />
+              Voir
            </a>
           </article>
          ))
@@ -1102,13 +1109,13 @@ export default function ChildrenPage() {
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
      <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
       <div className="mb-4 flex items-center justify-between">
-       <h2 className="text-xl font-semibold text-[#4B3B2A]"> Ajouter un enfant</h2>
+      <h2 className="text-xl font-semibold text-[#4B3B2A]">Ajouter un enfant</h2>
        <button
         type="button"
         onClick={() => setIsAddOpen(false)}
         className="rounded-lg border border-[#E7D8C8] px-2 py-1 text-sm text-[#7A5E45]"
        >
-        ✕
+          <X size={14} />
        </button>
       </div>
 

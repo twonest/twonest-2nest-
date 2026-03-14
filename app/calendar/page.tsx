@@ -6,6 +6,7 @@ import moment from "moment";
 import "moment/locale/fr";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Download, Eye, Pencil, PlusCircle, RefreshCcw, School, Trash2, X } from "lucide-react";
 import { Calendar, momentLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import type { User } from "@supabase/supabase-js";
@@ -1192,29 +1193,26 @@ export default function CalendarPage() {
   }
  };
 
- const statusUi: Record<SwapStatus, { label: string; emoji: string; className: string }> = {
+ const statusUi: Record<SwapStatus, { label: string; className: string }> = {
   en_attente: {
    label: "En attente",
-   emoji: "",
    className: "border-[#D9D0C8] bg-[#F5F0EB] text-[#6B5D55]",
   },
   acceptee: {
    label: "Acceptée",
-   emoji: "",
    className: "border-[#D9D0C8] bg-[#EDE8E3] text-[#6B8F71]",
   },
   refusee: {
    label: "Refusée",
-   emoji: "",
    className: "border-[#D9D0C8] bg-[#F5F0EB] text-[#A85C52]",
   },
  };
 
- const specialTypeConfig: Record<SpecialDayType, { label: string; emoji: string; color: string }> = {
-  ferie: { label: "Jour férié", emoji: "🔴", color: "#D94A4A" },
-  pedagogique: { label: "Congé pédagogique", emoji: "", color: "#D9A74A" },
-  vacances: { label: "Vacances scolaires", emoji: "🟢", color: "#6B8F71" },
-  scolaire: { label: "Événement scolaire", emoji: "🔵", color: "#7C6B5D" },
+ const specialTypeConfig: Record<SpecialDayType, { label: string; color: string }> = {
+  ferie: { label: "Jour férié", color: "#D94A4A" },
+  pedagogique: { label: "Congé pédagogique", color: "#D9A74A" },
+  vacances: { label: "Vacances scolaires", color: "#6B8F71" },
+  scolaire: { label: "Événement scolaire", color: "#7C6B5D" },
  };
 
  const calendarSpecialEvents = useMemo<CalendarSpecialDayEvent[]>(() => {
@@ -1895,14 +1893,16 @@ export default function CalendarPage() {
        href="/dashboard"
        className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
       >
-       ← Retour
+        <ArrowLeft size={16} className="mr-2" />
+        Retour
       </Link>
       <button
        type="button"
        onClick={openForm}
        className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
       >
-       + Ajouter
+      <PlusCircle size={16} className="mr-2" />
+      Ajouter
       </button>
      </div>
     </header>
@@ -1916,14 +1916,16 @@ export default function CalendarPage() {
         onClick={() => setJournalOpen((current) => !current)}
         className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
-        📓 Journal de garde
+          <BookOpen size={15} className="mr-2" />
+          Journal de garde
        </button>
        <button
         type="button"
         onClick={openSchoolImportModal}
         className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
-        🏫 Calendrier scolaire
+          <School size={15} className="mr-2" />
+          Calendrier scolaire
        </button>
        <button
         type="button"
@@ -1937,14 +1939,16 @@ export default function CalendarPage() {
         onClick={openForm}
         className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
        >
-        + Ajouter un événement
+          <PlusCircle size={15} className="mr-2" />
+          Ajouter un événement
        </button>
        <button
         type="button"
         onClick={onExportCalendarPdf}
         className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
-         Export PDF du calendrier
+          <Download size={15} className="mr-2" />
+          Export PDF du calendrier
        </button>
       </div>
      </div>
@@ -2005,7 +2009,8 @@ export default function CalendarPage() {
               onClick={() => openJournalEditForm(entry)}
               className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-1.5 text-xs font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
              >
-              ✏️ Modifier
+                <Pencil size={12} className="mr-1 inline-flex" />
+                Modifier
              </button>
             </article>
            ))
@@ -2021,7 +2026,7 @@ export default function CalendarPage() {
        onClick={() => setCalendarDate((current) => shiftMonth(current, -1))}
        className="rounded-xl border border-[#D9D0C8] bg-white px-3 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
       >
-       ←
+       <ChevronLeft size={16} />
       </button>
 
       <p className="text-center text-base font-semibold text-[#6B5D55] sm:text-lg">
@@ -2033,7 +2038,7 @@ export default function CalendarPage() {
        onClick={() => setCalendarDate((current) => shiftMonth(current, 1))}
        className="rounded-xl border border-[#D9D0C8] bg-white px-3 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
       >
-       →
+       <ChevronRight size={16} />
       </button>
      </div>
 
@@ -2059,7 +2064,7 @@ export default function CalendarPage() {
        style={{ height: 640 }}
        titleAccessor={(event: CalendarDisplayEvent) =>
         event.kind === "special"
-         ? `${specialTypeConfig[event.specialType].emoji} ${event.title}`
+         ? event.title
          : `${event.title} · ${event.type}`
        }
        onSelectEvent={(event: CalendarDisplayEvent) => {
@@ -2178,7 +2183,6 @@ export default function CalendarPage() {
            </div>
 
            <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold ${statusInfo.className}`}>
-            <span>{statusInfo.emoji}</span>
             <span>{statusInfo.label}</span>
            </span>
           </div>
@@ -2229,7 +2233,8 @@ export default function CalendarPage() {
         }}
         className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-left text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
-         Voir l'événement
+          <Eye size={14} className="mr-2 inline-flex" />
+          Voir l'événement
        </button>
        <button
         type="button"
@@ -2240,7 +2245,8 @@ export default function CalendarPage() {
         }}
         className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-left text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
-        🔄 Demander un échange pour ce jour
+          <RefreshCcw size={14} className="mr-2 inline-flex" />
+          Demander un échange pour ce jour
        </button>
       </div>
      </div>
@@ -2257,7 +2263,7 @@ export default function CalendarPage() {
         onClick={closeForm}
         className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
        >
-        ✕
+        <X size={14} />
        </button>
       </div>
 
@@ -2342,7 +2348,7 @@ export default function CalendarPage() {
         onClick={closeEditForm}
         className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
        >
-        ✕
+        <X size={14} />
        </button>
       </div>
 
@@ -2424,6 +2430,7 @@ export default function CalendarPage() {
          disabled={isUpdating || isDeleting}
          className="flex-1 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm font-semibold text-[#A85C52] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
         >
+         <Trash2 size={14} className="mr-2 inline-flex" />
          {isDeleting ? "Suppression..." : "Supprimer"}
         </button>
        </div>
@@ -2442,7 +2449,7 @@ export default function CalendarPage() {
         onClick={closeSwapForm}
         className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
        >
-        ✕
+        <X size={14} />
        </button>
       </div>
 
@@ -2528,7 +2535,7 @@ export default function CalendarPage() {
         onClick={closeJournalEditForm}
         className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
        >
-        ✕
+            <X size={14} />
        </button>
       </div>
 
@@ -2600,7 +2607,7 @@ export default function CalendarPage() {
          disabled={isSavingJournalEdit || isDeletingJournalEntry}
          className="flex-1 rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
         >
-         {isSavingJournalEdit ? "Sauvegarde..." : "💾 Sauvegarder"}
+         {isSavingJournalEdit ? "Sauvegarde..." : "Sauvegarder"}
         </button>
         <button
          type="button"
@@ -2608,7 +2615,8 @@ export default function CalendarPage() {
          disabled={isSavingJournalEdit || isDeletingJournalEntry}
          className="flex-1 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm font-semibold text-[#A85C52] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
         >
-         {isDeletingJournalEntry ? "Suppression..." : "🗑️ Supprimer"}
+         <Trash2 size={14} className="mr-2 inline-flex" />
+         {isDeletingJournalEntry ? "Suppression..." : "Supprimer"}
         </button>
        </div>
       </form>
@@ -2626,7 +2634,7 @@ export default function CalendarPage() {
         onClick={closeScheduleForm}
         className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
        >
-        ✕
+        <X size={14} />
        </button>
       </div>
 
@@ -2791,7 +2799,7 @@ export default function CalendarPage() {
         disabled={isApplyingSchedule}
         className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
        >
-        {isApplyingSchedule ? "Application..." : "🔄 Appliquer au calendrier"}
+            {isApplyingSchedule ? "Application..." : "Appliquer au calendrier"}
        </button>
       </form>
      </div>
@@ -2802,14 +2810,14 @@ export default function CalendarPage() {
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
       <div className="mb-4 flex items-center justify-between gap-2">
-       <h2 className="text-xl font-semibold text-[#2C2420]">🏫 Calendrier scolaire</h2>
+      <h2 className="text-xl font-semibold text-[#2C2420]">Calendrier scolaire</h2>
        <button
         type="button"
         onClick={closeSchoolImportModal}
         disabled={isLoadingSchoolBoardDates || isImportingSchoolDates}
         className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3] disabled:cursor-not-allowed disabled:opacity-70"
        >
-        ✕
+      <X size={14} />
        </button>
       </div>
 
@@ -2853,10 +2861,10 @@ export default function CalendarPage() {
         <div className="mt-3 space-y-2">
          {detectedSchoolDates.map((item) => {
           const typeUi = item.type === "pedagogique"
-           ? { emoji: "", label: "Journées pédagogiques", color: "#D9A74A" }
+                ? { label: "Journées pédagogiques", color: "#D9A74A" }
            : item.type === "scolaire"
-            ? { emoji: "🔵", label: "Rentrée scolaire", color: "#7C6B5D" }
-            : { emoji: "🟢", label: "Vacances / Relâche", color: "#6B8F71" };
+                  ? { label: "Rentrée scolaire", color: "#7C6B5D" }
+                  : { label: "Vacances / Relâche", color: "#6B8F71" };
           return (
            <label
             key={item.id}
@@ -2877,7 +2885,6 @@ export default function CalendarPage() {
              className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold"
              style={{ borderColor: typeUi.color, color: typeUi.color }}
             >
-             <span>{typeUi.emoji}</span>
              <span>{typeUi.label}</span>
             </span>
            </label>
@@ -2894,7 +2901,7 @@ export default function CalendarPage() {
            disabled={isImportingSchoolDates || isLoadingSchoolBoardDates}
            className="rounded-xl bg-[#6B8F71] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
           >
-           {isImportingSchoolDates ? "Ajout..." : " Ajouter au mon calendrier"}
+                {isImportingSchoolDates ? "Ajout..." : "Ajouter au calendrier"}
           </button>
           <button
            type="button"
@@ -2902,7 +2909,7 @@ export default function CalendarPage() {
            disabled={isImportingSchoolDates || isLoadingSchoolBoardDates}
            className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-2 text-sm font-semibold text-[#A85C52] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
           >
-            Annuler
+                  Annuler
           </button>
          </div>
         </div>
@@ -2924,7 +2931,7 @@ export default function CalendarPage() {
         onClick={closeDecisionModal}
         className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
        >
-        ✕
+            <X size={14} />
        </button>
       </div>
 
