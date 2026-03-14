@@ -44,6 +44,15 @@ before update on public.families
 for each row
 execute function public.set_families_updated_at();
 
+-- Bootstrap defensif: si family_members existe deja (schema legacy),
+-- on ajoute les colonnes necessaires aux policies ci-dessous.
+alter table if exists public.family_members add column if not exists family_id uuid;
+alter table if exists public.family_members add column if not exists user_id uuid;
+alter table if exists public.family_members add column if not exists role text;
+alter table if exists public.family_members add column if not exists status text;
+update public.family_members set role = 'parent' where role is null;
+update public.family_members set status = 'active' where status is null;
+
 alter table public.families enable row level security;
 
 drop policy if exists "families_select_member" on public.families;
