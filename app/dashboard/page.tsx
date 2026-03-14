@@ -12,11 +12,20 @@ type DashboardAction = {
   href: string;
 };
 
+type ChildSummary = {
+  id: string;
+  firstName: string;
+};
+
+const GLOBAL_CHILD_FILTER_KEY = "twonest.selectedChildId";
+const GLOBAL_CHILD_FILTER_NAME_KEY = "twonest.selectedChildName";
+
 const ACTIONS: DashboardAction[] = [
   { emoji: "📅", label: "Calendrier", href: "/calendar" },
   { emoji: "💬", label: "Messages", href: "/messages" },
   { emoji: "💸", label: "Dépenses", href: "/expenses" },
   { emoji: "📁", label: "Documents", href: "/documents" },
+  { emoji: "👶", label: "Enfants", href: "/children" },
   { emoji: "👤", label: "Mon profil", href: "/profile" },
 ];
 
@@ -44,6 +53,19 @@ export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [configError, setConfigError] = useState("");
+  const [children, setChildren] = useState<ChildSummary[]>([]);
+  const [selectedChildFilter, setSelectedChildFilter] = useState("all");
+
+  const resolveFamilyId = async (userId: string): Promise<string> => {
+    const supabase = getSupabaseBrowserClient();
+    const byUserId = await supabase.from("profiles").select("family_id").eq("user_id", userId).maybeSingle();
+    const byId = byUserId.error || !byUserId.data
+      ? await supabase.from("profiles").select("family_id").eq("id", userId).maybeSingle()
+      : null;
+
+    const row = (byUserId.data ?? byId?.data ?? null) as { family_id?: unknown } | null;
+    return typeof row?.family_id === "string" && row.family_id.trim().length > 0 ? row.family_id : userId;
+  };
 
   useEffect(() => {
     let supabase;
@@ -69,6 +91,33 @@ export default function DashboardPage() {
       }
 
       setUser(data.user);
+
+      const familyId = await resolveFamilyId(data.user.id);
+      const byFamily = await supabase.from("children").select("*").eq("family_id", familyId).order("created_at", { ascending: true });
+      const byUser = await supabase.from("children").select("*").eq("user_id", data.user.id).order("created_at", { ascending: true });
+      const allRows = [
+        ...(((byFamily.data ?? []) as Array<Record<string, unknown>>)),
+        ...(((byUser.data ?? []) as Array<Record<string, unknown>>)),
+      ];
+
+      const dedupe = new Map<string, ChildSummary>();
+      for (const row of allRows) {
+        const childIdRaw = row.id;
+        const childId = typeof childIdRaw === "string" || typeof childIdRaw === "number" ? String(childIdRaw) : "";
+        if (!childId) {
+          continue;
+        }
+
+        const firstNameRaw = row.first_name ?? row.prenom ?? row.name;
+        const firstName = typeof firstNameRaw === "string" && firstNameRaw.trim().length > 0 ? firstNameRaw.trim() : "Enfant";
+        if (!dedupe.has(childId)) {
+          dedupe.set(childId, { id: childId, firstName });
+        }
+      }
+      setChildren(Array.from(dedupe.values()));
+
+      const savedFilter = window.localStorage.getItem(GLOBAL_CHILD_FILTER_KEY) ?? "all";
+      setSelectedChildFilter(savedFilter);
       setCheckingSession(false);
     };
 
@@ -88,6 +137,20 @@ export default function DashboardPage() {
   }, [router]);
 
   const firstName = useMemo(() => (user ? getFirstName(user) : "Parent"), [user]);
+
+  const onChangeChildFilter = (value: string) => {
+    setSelectedChildFilter(value);
+    window.localStorage.setItem(GLOBAL_CHILD_FILTER_KEY, value);
+    window.localStorage.setItem("twonest.selectedChildFilter", value);
+
+    if (value === "all") {
+      window.localStorage.setItem(GLOBAL_CHILD_FILTER_NAME_KEY, "");
+      return;
+    }
+
+    const selectedChild = children.find((item) => item.id === value);
+    window.localStorage.setItem(GLOBAL_CHILD_FILTER_NAME_KEY, selectedChild?.firstName ?? "");
+  };
 
   const handleSignOut = async () => {
     const supabase = getSupabaseBrowserClient();
@@ -132,6 +195,23 @@ export default function DashboardPage() {
         </header>
 
         <section className="grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2 rounded-2xl border border-[#D7E6F4] bg-[#F8FBFF] p-4">
+            <label htmlFor="global-child-filter" className="mb-2 block text-sm font-semibold text-[#365A7B]">
+              Voir pour :
+            </label>
+            <select
+              id="global-child-filter"
+              value={selectedChildFilter}
+              onChange={(event) => onChangeChildFilter(event.target.value)}
+              className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-sm text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
+            >
+              <option value="all">Tous les enfants</option>
+              {children.map((child) => (
+                <option key={child.id} value={child.id}>{child.firstName}</option>
+              ))}
+            </select>
+          </div>
+
           {ACTIONS.map((action) => (
             <Link
               key={action.label}

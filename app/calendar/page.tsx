@@ -40,6 +40,8 @@ type CalendarEvent = {
   type: EventType;
   ownerUserId: string | null;
   parent: string | null;
+  childId: string | null;
+  childName: string | null;
 };
 
 type SpecialDay = {
@@ -135,6 +137,8 @@ const WEEKDAY_OPTIONS: Array<{ jsDay: number; label: string }> = [
   { jsDay: 0, label: "Dimanche" },
 ];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
+const SHARED_CHILD_KEY = "twonest.selectedChildId";
+const SHARED_CHILD_NAME_KEY = "twonest.selectedChildName";
 type SchoolBoardOption = "" | "cssp" | "other";
 
 function formatForDateTimeLocal(date: Date): string {
@@ -391,6 +395,8 @@ export default function CalendarPage() {
   const [decisionReason, setDecisionReason] = useState("");
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [profileRole, setProfileRole] = useState<ParentRole>("parent1");
+  const [selectedChildFilterId, setSelectedChildFilterId] = useState("all");
+  const [selectedChildFilterName, setSelectedChildFilterName] = useState("");
 
   const [schoolImportOpen, setSchoolImportOpen] = useState(false);
   const [schoolImportError, setSchoolImportError] = useState("");
@@ -452,6 +458,13 @@ export default function CalendarPage() {
     window.localStorage.setItem(SHARED_MONTH_KEY, toMonthValue(calendarDate));
   }, [calendarDate]);
 
+  useEffect(() => {
+    const selectedId = window.localStorage.getItem(SHARED_CHILD_KEY) ?? "all";
+    const selectedName = window.localStorage.getItem(SHARED_CHILD_NAME_KEY) ?? "";
+    setSelectedChildFilterId(selectedId);
+    setSelectedChildFilterName(selectedName.trim());
+  }, []);
+
   const refreshEvents = async (client = getSupabaseBrowserClient(), userId?: string) => {
     try {
       const rows = await fetchEvents(client, userId);
@@ -483,6 +496,8 @@ export default function CalendarPage() {
           end: endDate,
           ownerUserId: row.user_id ?? null,
           parent: row.parent ?? null,
+          childId: (row as EventRow & { child_id?: string | null }).child_id ?? null,
+          childName: (row as EventRow & { child_name?: string | null; enfant?: string | null }).child_name ?? (row as EventRow & { enfant?: string | null }).enfant ?? null,
         };
       })
       .filter((event): event is CalendarEvent => event !== null);
@@ -1226,9 +1241,22 @@ export default function CalendarPage() {
       .filter((item): item is CalendarSpecialDayEvent => item !== null);
   }, [specialDays]);
 
+  const filteredEvents = useMemo(() => {
+    if (selectedChildFilterId === "all") {
+      return events;
+    }
+
+    const normalizedName = selectedChildFilterName.toLowerCase();
+    return events.filter((item) => {
+      const matchesId = item.childId === selectedChildFilterId;
+      const matchesName = normalizedName.length > 0 && (item.childName ?? "").toLowerCase().includes(normalizedName);
+      return matchesId || matchesName;
+    });
+  }, [events, selectedChildFilterId, selectedChildFilterName]);
+
   const calendarDisplayEvents = useMemo<CalendarDisplayEvent[]>(() => {
-    return [...events, ...calendarSpecialEvents];
-  }, [calendarSpecialEvents, events]);
+    return [...filteredEvents, ...calendarSpecialEvents];
+  }, [calendarSpecialEvents, filteredEvents]);
 
   const monthDatePrefix = useMemo(
     () => `${calendarDate.getFullYear()}-${`${calendarDate.getMonth() + 1}`.padStart(2, "0")}`,
@@ -1286,7 +1314,7 @@ export default function CalendarPage() {
   const getGuardEventForDate = (date: Date): CalendarEvent | null => {
     const selectedDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
-    const found = events.find((eventItem) => {
+    const found = filteredEvents.find((eventItem) => {
       if (eventItem.type !== "Garde") {
         return false;
       }

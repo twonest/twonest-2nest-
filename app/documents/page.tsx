@@ -19,6 +19,7 @@ type DocumentItem = {
   id: string;
   title: string;
   category: DocumentCategory;
+  childId: string | null;
   childName: string | null;
   description: string | null;
   fileUrl: string;
@@ -36,6 +37,8 @@ type SupabaseDocumentRow = {
   category?: string;
   categorie?: string;
   child_name?: string;
+  child_id?: string;
+  enfant_id?: string;
   child?: string;
   enfant?: string;
   description?: string;
@@ -81,6 +84,8 @@ const CATEGORY_OPTIONS: Array<{ value: DocumentCategory; label: string }> = [
   { value: "assurances", label: "🏠 Assurances" },
   { value: "autres", label: "👕 Autres" },
 ];
+const SHARED_CHILD_KEY = "twonest.selectedChildId";
+const SHARED_CHILD_NAME_KEY = "twonest.selectedChildName";
 
 function normalizeParentRole(value: string | null | undefined): ParentRole {
   const normalized = (value ?? "").toLowerCase();
@@ -190,6 +195,8 @@ export default function DocumentsPage() {
   const [docDescription, setDocDescription] = useState("");
   const [docFile, setDocFile] = useState<File | null>(null);
   const [shareWithLegal, setShareWithLegal] = useState(false);
+  const [selectedChildFilterId, setSelectedChildFilterId] = useState("all");
+  const [selectedChildFilterName, setSelectedChildFilterName] = useState("");
 
   useEffect(() => {
     if (!toast) {
@@ -200,30 +207,75 @@ export default function DocumentsPage() {
     return () => clearTimeout(timeout);
   }, [toast]);
 
+  useEffect(() => {
+    const selectedId = window.localStorage.getItem(SHARED_CHILD_KEY) ?? "all";
+    const selectedName = window.localStorage.getItem(SHARED_CHILD_NAME_KEY) ?? "";
+    setSelectedChildFilterId(selectedId);
+    setSelectedChildFilterName(selectedName.trim());
+  }, []);
+
   const refreshDocuments = async (userId: string, familyId: string, source: "startup" | "after-insert" | "manual" = "manual") => {
     const supabase = getSupabaseBrowserClient();
     console.log("[documents] Filtres de chargement:", { user_id: userId, family_id: familyId, source });
 
-    const fetchWithFamily = await supabase
-      .from("documents")
-      .select("*")
-      .eq("family_id", familyId)
-      .order("created_at", { ascending: false });
+    const queryByColumn = async (column: string, value: string) => {
+      const result = await supabase
+        .from("documents")
+        .select("*")
+        .eq(column, value)
+        .order("created_at", { ascending: false });
 
-    const fetchByUser = await supabase
-      .from("documents")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
+      if (!result.error) {
+        return { rows: (result.data as SupabaseDocumentRow[] | null) ?? [], error: null };
+      }
 
-    if (fetchWithFamily.error && fetchByUser.error) {
-      throw new Error(fetchByUser.error.message || fetchWithFamily.error.message);
+      const missingColumn = extractMissingColumn(result.error.message);
+      if (missingColumn === column) {
+        return { rows: [] as SupabaseDocumentRow[], error: null };
+      }
+
+      return { rows: [] as SupabaseDocumentRow[], error: result.error.message };
+    };
+
+    const familyColumns = ["family_id"];
+    const userColumns = ["uploader_user_id", "uploaded_by", "user_id"];
+
+    const familyRows: SupabaseDocumentRow[] = [];
+    let familyError: string | null = null;
+    for (const column of familyColumns) {
+      const result = await queryByColumn(column, familyId);
+      if (result.error) {
+        familyError = result.error;
+        continue;
+      }
+      familyRows.push(...result.rows);
+      if (result.rows.length > 0) {
+        break;
+      }
+    }
+
+    const userRows: SupabaseDocumentRow[] = [];
+    let userError: string | null = null;
+    for (const column of userColumns) {
+      const result = await queryByColumn(column, userId);
+      if (result.error) {
+        userError = result.error;
+        continue;
+      }
+      userRows.push(...result.rows);
+      if (result.rows.length > 0) {
+        break;
+      }
+    }
+
+    if (familyRows.length === 0 && userRows.length === 0 && familyError && userError) {
+      throw new Error(userError || familyError);
     }
 
     const rowMap = new Map<string, SupabaseDocumentRow>();
     const allRows = [
-      ...((fetchWithFamily.data as SupabaseDocumentRow[] | null) ?? []),
-      ...((fetchByUser.data as SupabaseDocumentRow[] | null) ?? []),
+      ...familyRows,
+      ...userRows,
     ];
 
     for (const row of allRows) {
@@ -254,6 +306,7 @@ export default function DocumentsPage() {
           id,
           title,
           category: normalizeCategory(row.category ?? row.categorie),
+          childId: row.child_id ?? row.enfant_id ?? null,
           childName: row.child_name ?? row.child ?? row.enfant ?? null,
           description: row.description ?? row.short_description ?? null,
           fileUrl,
@@ -336,6 +389,15 @@ export default function DocumentsPage() {
   const filteredDocuments = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return documents.filter((item) => {
+      if (selectedChildFilterId !== "all") {
+        const matchesId = item.childId === selectedChildFilterId;
+        const matchesName = selectedChildFilterName.length > 0 &&
+          (item.childName ?? "").toLowerCase().includes(selectedChildFilterName.toLowerCase());
+        if (!matchesId && !matchesName) {
+          return false;
+        }
+      }
+
       if (activeTab !== "all" && item.category !== activeTab) {
         return false;
       }
@@ -347,7 +409,7 @@ export default function DocumentsPage() {
       const category = categoryLabel(item.category).toLowerCase();
       return item.title.toLowerCase().includes(query) || category.includes(query);
     });
-  }, [activeTab, documents, searchQuery]);
+  }, [activeTab, documents, searchQuery, selectedChildFilterId, selectedChildFilterName]);
 
   const resetForm = () => {
     setDocTitle("");
@@ -406,8 +468,8 @@ export default function DocumentsPage() {
       let payload: Record<string, unknown> = {
         title: docTitle.trim(),
         titre: docTitle.trim(),
-        category: docCategory,
         categorie: docCategory,
+        child_id: selectedChildFilterId !== "all" ? selectedChildFilterId : null,
         child_name: docChildName.trim() || null,
         enfant: docChildName.trim() || null,
         description: docDescription.trim() || null,
@@ -422,6 +484,11 @@ export default function DocumentsPage() {
         family_id: currentFamilyId,
         shared_with_legal: shareWithLegal,
       };
+
+      if (!docChildName.trim() && selectedChildFilterId !== "all" && selectedChildFilterName) {
+        payload.child_name = selectedChildFilterName;
+        payload.enfant = selectedChildFilterName;
+      }
 
       let insertError: string | null = null;
       for (let attempt = 0; attempt < 12; attempt += 1) {

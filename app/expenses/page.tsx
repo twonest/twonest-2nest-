@@ -30,6 +30,8 @@ type ExpenseItem = {
   amount: number;
   description: string;
   category: ExpenseCategory;
+  childId: string | null;
+  childName: string | null;
   paidBy: PaidBy;
   expenseDate: string;
   reimbursed: boolean;
@@ -46,6 +48,10 @@ type SupabaseExpenseRow = {
   label?: string;
   category?: string;
   categorie?: string;
+  child_id?: string;
+  enfant_id?: string;
+  child_name?: string;
+  enfant?: string;
   paid_by?: string;
   payer?: string;
   parent?: string;
@@ -117,6 +123,8 @@ type ParentNames = {
 
 const CATEGORIES: ExpenseCategory[] = ["Médical", "Scolaire", "Vêtements", "Activités", "Nourriture", "Autre"];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
+const SHARED_CHILD_KEY = "twonest.selectedChildId";
+const SHARED_CHILD_NAME_KEY = "twonest.selectedChildName";
 const MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Aoû", "Sep", "Oct", "Nov", "Déc"];
 const DEFAULT_SHARE_RULES: Record<ExpenseCategory, number> = {
   Médical: 50,
@@ -577,6 +585,8 @@ export default function ExpensesPage() {
           amount: parsedAmount,
           description: row.description ?? row.label ?? "Sans description",
           category: normalizeCategory(row.category ?? row.categorie),
+          childId: row.child_id ?? row.enfant_id ?? null,
+          childName: row.child_name ?? row.enfant ?? null,
           paidBy: normalizePaidBy(row.paid_by ?? row.payer ?? row.parent),
           expenseDate: rawDate,
           reimbursed,
@@ -588,7 +598,17 @@ export default function ExpensesPage() {
 
     const mapped = mappedEntries.filter((expense): expense is ExpenseItem => expense !== null);
 
-    setExpenses(mapped);
+    const selectedChildId = window.localStorage.getItem(SHARED_CHILD_KEY) ?? "all";
+    const selectedChildName = (window.localStorage.getItem(SHARED_CHILD_NAME_KEY) ?? "").toLowerCase();
+    const filtered = selectedChildId === "all"
+      ? mapped
+      : mapped.filter((expense) => {
+        const byId = expense.childId === selectedChildId;
+        const byName = selectedChildName.length > 0 && (expense.childName ?? "").toLowerCase().includes(selectedChildName);
+        return byId || byName;
+      });
+
+    setExpenses(filtered);
   };
 
   const refreshExpenseReviews = async (client = getSupabaseBrowserClient()) => {
@@ -834,6 +854,8 @@ export default function ExpensesPage() {
           amount: parsedAmount,
           description: description.trim(),
           category,
+          child_id: window.localStorage.getItem(SHARED_CHILD_KEY) !== "all" ? window.localStorage.getItem(SHARED_CHILD_KEY) : null,
+          child_name: window.localStorage.getItem(SHARED_CHILD_NAME_KEY) || null,
           paid_by: paidBy,
           expense_date: expenseDate,
           recu_url: uploadedReceiptUrl,
@@ -849,6 +871,8 @@ export default function ExpensesPage() {
           amount: parsedAmount,
           description: description.trim(),
           category,
+          child_id: window.localStorage.getItem(SHARED_CHILD_KEY) !== "all" ? window.localStorage.getItem(SHARED_CHILD_KEY) : null,
+          child_name: window.localStorage.getItem(SHARED_CHILD_NAME_KEY) || null,
           paid_by: paidBy,
           expense_date: expenseDate,
           recu_url: uploadedReceiptUrl,
@@ -864,6 +888,8 @@ export default function ExpensesPage() {
           montant: parsedAmount,
           label: description.trim(),
           categorie: category,
+          enfant_id: window.localStorage.getItem(SHARED_CHILD_KEY) !== "all" ? window.localStorage.getItem(SHARED_CHILD_KEY) : null,
+          enfant: window.localStorage.getItem(SHARED_CHILD_NAME_KEY) || null,
           parent: paidBy,
           date: expenseDate,
           recu_url: uploadedReceiptUrl,
@@ -878,6 +904,8 @@ export default function ExpensesPage() {
           montant: parsedAmount,
           label: description.trim(),
           categorie: category,
+          enfant_id: window.localStorage.getItem(SHARED_CHILD_KEY) !== "all" ? window.localStorage.getItem(SHARED_CHILD_KEY) : null,
+          enfant: window.localStorage.getItem(SHARED_CHILD_NAME_KEY) || null,
           parent: paidBy,
           date: expenseDate,
           parent1_share_pct: parent1Pct,
