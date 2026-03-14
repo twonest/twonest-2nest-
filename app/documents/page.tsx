@@ -263,8 +263,8 @@ export default function DocumentsPage() {
           uploaderRole: uploaderRoleRaw ? normalizeParentRole(uploaderRoleRaw) : inferredRole,
         };
       })
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .filter((item): item is DocumentItem => item !== null);
+      .filter((item): item is DocumentItem => item !== null)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     if (source === "startup") {
       console.log("[documents] Documents chargés au démarrage:", mapped);
