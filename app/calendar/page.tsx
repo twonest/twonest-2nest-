@@ -11,7 +11,6 @@ import "react-big-calendar/lib/css/react-big-calendar.css";
 import type { User } from "@supabase/supabase-js";
 import {
   createEvent,
-  createSpecialDay,
   createSpecialDaysBulk,
   createSwapRequest,
   deleteEvent,
@@ -134,12 +133,6 @@ const WEEKDAY_OPTIONS: Array<{ jsDay: number; label: string }> = [
   { jsDay: 5, label: "Vendredi" },
   { jsDay: 6, label: "Samedi" },
   { jsDay: 0, label: "Dimanche" },
-];
-const SPECIAL_DAY_OPTIONS: Array<{ value: SpecialDayType; label: string; emoji: string; color: string }> = [
-  { value: "ferie", label: "Jour férié", emoji: "🔴", color: "#D94A4A" },
-  { value: "pedagogique", label: "Congé pédagogique", emoji: "🟡", color: "#D9A74A" },
-  { value: "vacances", label: "Vacances scolaires", emoji: "🟢", color: "#50C878" },
-  { value: "scolaire", label: "Événement scolaire", emoji: "🔵", color: "#4A90D9" },
 ];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
 type SchoolBoardOption = "" | "cssp" | "other";
@@ -366,7 +359,6 @@ export default function CalendarPage() {
   const [swapFormOpen, setSwapFormOpen] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
-  const [specialDayFormOpen, setSpecialDayFormOpen] = useState(false);
   const [journalEditOpen, setJournalEditOpen] = useState(false);
   const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
 
@@ -374,7 +366,6 @@ export default function CalendarPage() {
   const [editError, setEditError] = useState("");
   const [swapError, setSwapError] = useState("");
   const [decisionError, setDecisionError] = useState("");
-  const [specialDayError, setSpecialDayError] = useState("");
   const [journalEditError, setJournalEditError] = useState("");
   const [scheduleError, setScheduleError] = useState("");
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -401,11 +392,6 @@ export default function CalendarPage() {
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [profileRole, setProfileRole] = useState<ParentRole>("parent1");
 
-  const [specialDayTitle, setSpecialDayTitle] = useState("");
-  const [specialDayDate, setSpecialDayDate] = useState(() => formatForDateInput(new Date()));
-  const [specialDayType, setSpecialDayType] = useState<SpecialDayType>("ferie");
-  const [specialDayNotes, setSpecialDayNotes] = useState("");
-  const [isCreatingSpecialDay, setIsCreatingSpecialDay] = useState(false);
   const [schoolImportOpen, setSchoolImportOpen] = useState(false);
   const [schoolImportError, setSchoolImportError] = useState("");
   const [selectedSchoolBoard, setSelectedSchoolBoard] = useState<SchoolBoardOption>("");
@@ -1209,20 +1195,12 @@ export default function CalendarPage() {
     },
   };
 
-  const specialTypeConfig = useMemo(() => {
-    return SPECIAL_DAY_OPTIONS.reduce<Record<SpecialDayType, { label: string; emoji: string; color: string }>>(
-      (accumulator, item) => {
-        accumulator[item.value] = { label: item.label, emoji: item.emoji, color: item.color };
-        return accumulator;
-      },
-      {
-        ferie: { label: "Jour férié", emoji: "🔴", color: "#D94A4A" },
-        pedagogique: { label: "Congé pédagogique", emoji: "🟡", color: "#D9A74A" },
-        vacances: { label: "Vacances scolaires", emoji: "🟢", color: "#50C878" },
-        scolaire: { label: "Événement scolaire", emoji: "🔵", color: "#4A90D9" },
-      },
-    );
-  }, []);
+  const specialTypeConfig: Record<SpecialDayType, { label: string; emoji: string; color: string }> = {
+    ferie: { label: "Jour férié", emoji: "🔴", color: "#D94A4A" },
+    pedagogique: { label: "Congé pédagogique", emoji: "🟡", color: "#D9A74A" },
+    vacances: { label: "Vacances scolaires", emoji: "🟢", color: "#50C878" },
+    scolaire: { label: "Événement scolaire", emoji: "🔵", color: "#4A90D9" },
+  };
 
   const calendarSpecialEvents = useMemo<CalendarSpecialDayEvent[]>(() => {
     return specialDays
@@ -1319,41 +1297,6 @@ export default function CalendarPage() {
     });
 
     return found ?? null;
-  };
-
-  const onCreateSpecialDay = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (!user || specialDayTitle.trim().length === 0 || specialDayDate.length === 0) {
-      setSpecialDayError("Titre et date sont obligatoires.");
-      return;
-    }
-
-    setIsCreatingSpecialDay(true);
-    setSpecialDayError("");
-
-    try {
-      const supabase = getSupabaseBrowserClient();
-      await createSpecialDay(supabase, {
-        title: specialDayTitle.trim(),
-        date: specialDayDate,
-        type: specialDayType,
-        notes: specialDayNotes.trim() || null,
-        user_id: user.id,
-      });
-
-      await refreshSpecialDays(supabase);
-      setSpecialDayTitle("");
-      setSpecialDayDate(formatForDateInput(new Date()));
-      setSpecialDayType("ferie");
-      setSpecialDayNotes("");
-      setSpecialDayFormOpen(false);
-      setToast({ message: "Jour spécial ajouté.", variant: "success" });
-    } catch (error) {
-      setSpecialDayError(error instanceof Error ? error.message : "Erreur pendant l'ajout du jour spécial.");
-    } finally {
-      setIsCreatingSpecialDay(false);
-    }
   };
 
   const openSchoolImportModal = () => {
@@ -1946,16 +1889,6 @@ export default function CalendarPage() {
                 className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
               >
                 📓 Journal de garde
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSpecialDayError("");
-                  setSpecialDayFormOpen(true);
-                }}
-                className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
-              >
-                ➕ Ajouter un jour spécial
               </button>
               <button
                 type="button"
@@ -2947,85 +2880,6 @@ export default function CalendarPage() {
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {specialDayFormOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
-          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-[#17324D]">Ajouter un jour spécial</h2>
-              <button
-                type="button"
-                onClick={() => setSpecialDayFormOpen(false)}
-                className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD]"
-              >
-                ✕
-              </button>
-            </div>
-
-            {specialDayError && (
-              <p className="mb-4 rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-3 py-2 text-sm text-[#8D3E45]">{specialDayError}</p>
-            )}
-
-            <form className="space-y-4" onSubmit={onCreateSpecialDay}>
-              <div>
-                <label htmlFor="specialDayTitle" className="mb-1 block text-sm font-medium text-[#2D4B68]">Titre</label>
-                <input
-                  id="specialDayTitle"
-                  type="text"
-                  value={specialDayTitle}
-                  onChange={(event) => setSpecialDayTitle(event.target.value)}
-                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-                  placeholder="Ex: Congé pédagogique"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="specialDayDate" className="mb-1 block text-sm font-medium text-[#2D4B68]">Date</label>
-                <input
-                  id="specialDayDate"
-                  type="date"
-                  value={specialDayDate}
-                  onChange={(event) => setSpecialDayDate(event.target.value)}
-                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="specialDayType" className="mb-1 block text-sm font-medium text-[#2D4B68]">Type</label>
-                <select
-                  id="specialDayType"
-                  value={specialDayType}
-                  onChange={(event) => setSpecialDayType(event.target.value as SpecialDayType)}
-                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-                >
-                  {SPECIAL_DAY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.emoji} {option.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label htmlFor="specialDayNotes" className="mb-1 block text-sm font-medium text-[#2D4B68]">Notes (optionnel)</label>
-                <textarea
-                  id="specialDayNotes"
-                  value={specialDayNotes}
-                  onChange={(event) => setSpecialDayNotes(event.target.value)}
-                  rows={3}
-                  className="w-full rounded-xl border border-[#D8E4F0] px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={isCreatingSpecialDay}
-                className="w-full rounded-xl bg-[#4A90D9] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(74,144,217,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {isCreatingSpecialDay ? "Enregistrement..." : "Enregistrer le jour spécial"}
-              </button>
-            </form>
           </div>
         </div>
       )}
