@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import jsPDF from "jspdf";
 import moment from "moment";
 import "moment/locale/fr";
@@ -149,17 +148,32 @@ const SPECIAL_DAY_OPTIONS: Array<{ value: SpecialDayType; label: string; emoji: 
   { value: "scolaire", label: "Événement scolaire", emoji: "🔵", color: "#4A90D9" },
 ];
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
-const SchoolPdfUploadButton = dynamic(() => import("@/components/SchoolPdfUploadButton"), { ssr: false });
+type SchoolBoardOption = "" | "cssp" | "other";
 const SCHOOL_KEYWORD_RULES: KeywordRule[] = [
   { keyword: "congé pédagogique", description: "Congé pédagogique", type: "pedagogique" },
+  { keyword: "conge pedagogique", description: "Congé pédagogique", type: "pedagogique" },
   { keyword: "journée pédagogique", description: "Journée pédagogique", type: "pedagogique" },
-  { keyword: "relâche", description: "Relâche", type: "vacances" },
-  { keyword: "vacances", description: "Vacances", type: "vacances" },
+  { keyword: "journee pedagogique", description: "Journée pédagogique", type: "pedagogique" },
+  { keyword: "pédagogique", description: "Journée pédagogique", type: "pedagogique" },
+  { keyword: "pedagogique", description: "Journée pédagogique", type: "pedagogique" },
+  { keyword: "relâche", description: "Relâche scolaire", type: "vacances" },
+  { keyword: "relache", description: "Relâche scolaire", type: "vacances" },
+  { keyword: "vacances", description: "Vacances scolaires", type: "vacances" },
+  { keyword: "congé", description: "Congé scolaire", type: "vacances" },
+  { keyword: "conge", description: "Congé scolaire", type: "vacances" },
   { keyword: "férié", description: "Jour férié", type: "ferie" },
   { keyword: "ferie", description: "Jour férié", type: "ferie" },
-  { keyword: "rentrée", description: "Rentrée", type: "scolaire" },
+  { keyword: "férié", description: "Jour férié", type: "ferie" },
+  { keyword: "rentrée", description: "Rentrée scolaire", type: "scolaire" },
+  { keyword: "rentree", description: "Rentrée scolaire", type: "scolaire" },
   { keyword: "examens", description: "Examens", type: "scolaire" },
+  { keyword: "examen", description: "Examen", type: "scolaire" },
   { keyword: "remise de bulletins", description: "Remise de bulletins", type: "scolaire" },
+  { keyword: "bulletin", description: "Remise de bulletins", type: "scolaire" },
+  { keyword: "étape", description: "Fin d'étape", type: "scolaire" },
+  { keyword: "etape", description: "Fin d'étape", type: "scolaire" },
+  { keyword: "spectacle", description: "Spectacle scolaire", type: "scolaire" },
+  { keyword: "activité", description: "Activité scolaire", type: "scolaire" },
 ];
 const SCHOOL_MONTHS_FR: Record<string, number> = {
   janvier: 1,
@@ -203,6 +217,7 @@ function toIsoSchoolDate(year: number, month: number, day: number): string | nul
 function extractDatesFromSchoolLine(line: string): string[] {
   const found = new Set<string>();
 
+  // Format: dd/mm/yyyy ou dd-mm-yyyy ou dd.mm.yyyy
   const slashPattern = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/g;
   for (const match of line.matchAll(slashPattern)) {
     const day = Number(match[1]);
@@ -210,40 +225,72 @@ function extractDatesFromSchoolLine(line: string): string[] {
     const rawYear = Number(match[3]);
     const year = rawYear < 100 ? 2000 + rawYear : rawYear;
     const iso = toIsoSchoolDate(year, month, day);
-    if (iso) {
-      found.add(iso);
-    }
+    if (iso) found.add(iso);
   }
 
+  // Format ISO: yyyy-mm-dd
   const isoPattern = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
   for (const match of line.matchAll(isoPattern)) {
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
-    const iso = toIsoSchoolDate(year, month, day);
-    if (iso) {
-      found.add(iso);
-    }
+    const iso = toIsoSchoolDate(Number(match[1]), Number(match[2]), Number(match[3]));
+    if (iso) found.add(iso);
   }
 
-  const monthPattern = /\b(\d{1,2})\s+(janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre)\s+(\d{4})\b/gi;
+  // Format: "3 mars 2026" ou "3 mars" (avec année implicite)
+  const monthPattern = /\b(\d{1,2})(?:er|e|ème)?\s+(janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre)(?:\s+(\d{4}))?\b/gi;
+  const currentYear = new Date().getFullYear();
   for (const match of line.matchAll(monthPattern)) {
     const day = Number(match[1]);
     const monthLabel = normalizeSchoolText(match[2]);
-    const year = Number(match[3]);
+    const year = match[3] ? Number(match[3]) : currentYear;
     const month = SCHOOL_MONTHS_FR[monthLabel];
-    if (!month) {
-      continue;
-    }
-
+    if (!month) continue;
     const iso = toIsoSchoolDate(year, month, day);
-    if (iso) {
-      found.add(iso);
+    if (iso) found.add(iso);
+  }
+
+  // Format plage: "du 1er au 5 mars 2026" → génère toutes les dates
+  const rangePattern = /\bdu\s+(\d{1,2})(?:er|e|ème)?\s+(?:au|à)\s+(\d{1,2})(?:er|e|ème)?\s+(janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre)(?:\s+(\d{4}))?\b/gi;
+  for (const match of line.matchAll(rangePattern)) {
+    const dayStart = Number(match[1]);
+    const dayEnd = Number(match[2]);
+    const monthLabel = normalizeSchoolText(match[3]);
+    const year = match[4] ? Number(match[4]) : currentYear;
+    const month = SCHOOL_MONTHS_FR[monthLabel];
+    if (!month) continue;
+    for (let d = dayStart; d <= dayEnd; d++) {
+      const iso = toIsoSchoolDate(year, month, d);
+      if (iso) found.add(iso);
+    }
+  }
+
+  // Format plage mois différents: "du 27 janvier au 2 février 2026"
+  const crossMonthPattern = /\bdu\s+(\d{1,2})(?:er|e|ème)?\s+(janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre)\s+au\s+(\d{1,2})(?:er|e|ème)?\s+(janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre)(?:\s+(\d{4}))?\b/gi;
+  for (const match of line.matchAll(crossMonthPattern)) {
+    const dayStart = Number(match[1]);
+    const monthStart = SCHOOL_MONTHS_FR[normalizeSchoolText(match[2])];
+    const dayEnd = Number(match[3]);
+    const monthEnd = SCHOOL_MONTHS_FR[normalizeSchoolText(match[4])];
+    const year = match[5] ? Number(match[5]) : currentYear;
+    if (!monthStart || !monthEnd) continue;
+    let m = monthStart;
+    let d = dayStart;
+    const maxIterations = 60;
+    let iterations = 0;
+    while ((m < monthEnd || (m === monthEnd && d <= dayEnd)) && iterations < maxIterations) {
+      const iso = toIsoSchoolDate(year, m, d);
+      if (iso) found.add(iso);
+      d++;
+      const daysInMonth = new Date(year, m, 0).getDate();
+      if (d > daysInMonth) { d = 1; m++; }
+      iterations++;
     }
   }
 
   return Array.from(found.values());
 }
+
+// Fenêtre contextuelle : nb de lignes à inspecter autour d'une ligne avec mot-clé
+const CONTEXT_WINDOW = 3;
 
 function detectSchoolDatesFromText(text: string): ImportedSchoolDate[] {
   const lines = text
@@ -254,41 +301,60 @@ function detectSchoolDatesFromText(text: string): ImportedSchoolDate[] {
   const detected: ImportedSchoolDate[] = [];
   const dedupe = new Set<string>();
 
-  for (const lineRaw of lines) {
-    const normalized = normalizeSchoolText(lineRaw);
+  for (let i = 0; i < lines.length; i++) {
+    const normalized = normalizeSchoolText(lines[i]);
     const rule = SCHOOL_KEYWORD_RULES.find((item) => normalized.includes(item.keyword));
-    if (!rule) {
-      continue;
-    }
+    if (!rule) continue;
 
-    const dates = extractDatesFromSchoolLine(lineRaw);
-    if (dates.length === 0) {
-      continue;
-    }
+    // Cherche des dates sur la ligne courante ET dans la fenêtre contextuelle
+    const windowStart = Math.max(0, i - CONTEXT_WINDOW);
+    const windowEnd = Math.min(lines.length - 1, i + CONTEXT_WINDOW);
+    const contextLines = lines.slice(windowStart, windowEnd + 1);
+    const contextText = contextLines.join(" ");
+
+    const dates = extractDatesFromSchoolLine(contextText);
+    if (dates.length === 0) continue;
 
     for (const date of dates) {
       const id = `${date}|${rule.type}|${rule.description}`;
-      if (dedupe.has(id)) {
-        continue;
-      }
-
+      if (dedupe.has(id)) continue;
       dedupe.add(id);
-      detected.push({
-        id,
-        date,
-        description: rule.description,
-        type: rule.type,
-      });
+      detected.push({ id, date, description: rule.description, type: rule.type });
     }
   }
 
   return detected.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+let pdfjsModulePromise: Promise<typeof import("pdfjs-dist")> | null = null;
+let pdfWorkerPort: Worker | null = null;
+
+async function getPdfJsModule() {
+  if (!pdfjsModulePromise) {
+    pdfjsModulePromise = import("pdfjs-dist");
+  }
+
+  const pdfjs = await pdfjsModulePromise;
+  if (typeof window !== "undefined") {
+    if (!pdfWorkerPort) {
+      try {
+        pdfWorkerPort = new Worker("/pdf.worker.min.mjs", { type: "module" });
+        pdfjs.GlobalWorkerOptions.workerPort = pdfWorkerPort;
+      } catch {
+        pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      }
+    }
+
+    if (!pdfjs.GlobalWorkerOptions.workerPort && !pdfjs.GlobalWorkerOptions.workerSrc) {
+      pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+    }
+  }
+
+  return pdfjs;
+}
+
 async function extractTextFromPdfInBrowser(file: File): Promise<string> {
-  const pdfjs = await import("pdfjs-dist");
-  const workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
-  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+  const pdfjs = await getPdfJsModule();
 
   const fileData = new Uint8Array(await file.arrayBuffer());
   const loadingTask = pdfjs.getDocument({ data: fileData });
@@ -578,11 +644,12 @@ export default function CalendarPage() {
   const [isCreatingSpecialDay, setIsCreatingSpecialDay] = useState(false);
   const [schoolImportOpen, setSchoolImportOpen] = useState(false);
   const [schoolImportError, setSchoolImportError] = useState("");
-  const [isUploadingSchoolPdf, setIsUploadingSchoolPdf] = useState(false);
+  const [selectedSchoolBoard, setSelectedSchoolBoard] = useState<SchoolBoardOption>("");
+  const [isLoadingSchoolBoardDates, setIsLoadingSchoolBoardDates] = useState(false);
+  const [csspAlreadyImported, setCsspAlreadyImported] = useState(false);
   const [isImportingSchoolDates, setIsImportingSchoolDates] = useState(false);
   const [detectedSchoolDates, setDetectedSchoolDates] = useState<ImportedSchoolDate[]>([]);
   const [selectedSchoolDateIds, setSelectedSchoolDateIds] = useState<Record<string, boolean>>({});
-  const [schoolPdfName, setSchoolPdfName] = useState("");
   const [currentFamilyId, setCurrentFamilyId] = useState<string | null>(null);
   const [isSavingJournalEdit, setIsSavingJournalEdit] = useState(false);
   const [isDeletingJournalEntry, setIsDeletingJournalEntry] = useState(false);
@@ -1527,68 +1594,116 @@ export default function CalendarPage() {
 
   const openSchoolImportModal = () => {
     setSchoolImportError("");
+    setSelectedSchoolBoard("");
     setDetectedSchoolDates([]);
     setSelectedSchoolDateIds({});
-    setSchoolPdfName("");
+    setCsspAlreadyImported(false);
     setSchoolImportOpen(true);
   };
 
   const closeSchoolImportModal = () => {
-    if (isUploadingSchoolPdf || isImportingSchoolDates) {
+    if (isLoadingSchoolBoardDates || isImportingSchoolDates) {
       return;
     }
     setSchoolImportOpen(false);
     setSchoolImportError("");
+    setSelectedSchoolBoard("");
     setDetectedSchoolDates([]);
     setSelectedSchoolDateIds({});
-    setSchoolPdfName("");
+    setCsspAlreadyImported(false);
   };
 
-  const onUploadSchoolCalendarPdf = async (file: File) => {
-    if (!file || !user) {
+  const loadCsspSchoolCalendar = async () => {
+    if (!user) {
+      setSchoolImportError("Session invalide.");
       return;
     }
 
-    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-      setSchoolImportError("Veuillez déposer un fichier PDF.");
-      return;
-    }
-
-    setIsUploadingSchoolPdf(true);
+    setIsLoadingSchoolBoardDates(true);
     setSchoolImportError("");
     setDetectedSchoolDates([]);
     setSelectedSchoolDateIds({});
-    setSchoolPdfName(file.name);
+    setCsspAlreadyImported(false);
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-      const filePath = `${user.id}/${Date.now()}-${sanitizedName}`;
+      const { data, error } = await supabase
+        .from("jours_speciaux")
+        .select("id, title, date, type")
+        .ilike("title", "%CSSP%")
+        .order("date", { ascending: true });
 
-      const uploadResult = await supabase.storage.from("school-calendars").upload(filePath, file, { upsert: true });
-      if (uploadResult.error) {
-        setSchoolImportError(`${uploadResult.error.message}. Vérifie que le bucket 'school-calendars' existe.`);
+      if (error) {
+        setSchoolImportError(error.message);
         return;
       }
 
-      const extractedText = await extractTextFromPdfInBrowser(file);
-      const detected = detectSchoolDatesFromText(extractedText);
-      if (detected.length === 0) {
-        setSchoolImportError("Aucune date scolaire détectée dans ce PDF.");
+      const sourceRows = (data as SpecialDayRow[])
+        .map((row, index): ImportedSchoolDate | null => {
+          if (!row.date || !row.title) {
+            return null;
+          }
+
+          const type = normalizeSpecialDayType(row.type);
+          return {
+            id: `${row.date}|${row.title}|${type}|${index}`,
+            date: row.date,
+            description: row.title,
+            type,
+          };
+        })
+        .filter((item): item is ImportedSchoolDate => item !== null);
+
+      if (sourceRows.length === 0) {
+        setSchoolImportError("Aucune date CSSP disponible.");
         return;
       }
 
-      const selectedMap = detected.reduce<Record<string, boolean>>((accumulator, item) => {
+      const selectedMap = sourceRows.reduce<Record<string, boolean>>((accumulator, item) => {
         accumulator[item.id] = true;
         return accumulator;
       }, {});
 
-      setDetectedSchoolDates(detected);
+      const familyId = currentFamilyId ?? user.id;
+      let existingForFamilyCount = 0;
+      const existingForFamily = await supabase
+        .from("jours_speciaux")
+        .select("id", { count: "exact", head: true })
+        .eq("family_id", familyId)
+        .ilike("title", "%CSSP%");
+
+      if (existingForFamily.error) {
+        const fallback = await supabase
+          .from("jours_speciaux")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .ilike("title", "%CSSP%");
+        if (!fallback.error) {
+          existingForFamilyCount = fallback.count ?? 0;
+        }
+      } else {
+        existingForFamilyCount = existingForFamily.count ?? 0;
+      }
+
+      setCsspAlreadyImported(existingForFamilyCount > 0);
+      setDetectedSchoolDates(sourceRows);
       setSelectedSchoolDateIds(selectedMap);
     } catch (error) {
-      setSchoolImportError(error instanceof Error ? error.message : "Erreur pendant l'import du PDF.");
+      setSchoolImportError(error instanceof Error ? error.message : "Erreur pendant le chargement CSSP.");
     } finally {
-      setIsUploadingSchoolPdf(false);
+      setIsLoadingSchoolBoardDates(false);
+    }
+  };
+
+  const onSchoolBoardChange = async (value: SchoolBoardOption) => {
+    setSelectedSchoolBoard(value);
+    setSchoolImportError("");
+    setDetectedSchoolDates([]);
+    setSelectedSchoolDateIds({});
+    setCsspAlreadyImported(false);
+
+    if (value === "cssp") {
+      await loadCsspSchoolCalendar();
     }
   };
 
@@ -1617,22 +1732,54 @@ export default function CalendarPage() {
     try {
       const supabase = getSupabaseBrowserClient();
       const familyId = currentFamilyId ?? user.id;
-      const rows = selectedRows.map((item) => ({
+      const existingRowsResult = await supabase
+        .from("jours_speciaux")
+        .select("date, title, type")
+        .eq("family_id", familyId);
+
+      let existingRows = existingRowsResult.data as Array<{ date?: string; title?: string; type?: string }> | null;
+      if (existingRowsResult.error) {
+        const fallback = await supabase
+          .from("jours_speciaux")
+          .select("date, title, type")
+          .eq("user_id", user.id);
+        if (fallback.error) {
+          throw new Error(fallback.error.message);
+        }
+        existingRows = fallback.data as Array<{ date?: string; title?: string; type?: string }> | null;
+      }
+
+      const existingKeySet = new Set(
+        (existingRows ?? []).map((row) => {
+          const rowDate = row.date ?? "";
+          const rowTitle = (row.title ?? "").trim().toLowerCase();
+          const rowType = normalizeSpecialDayType(row.type);
+          return `${rowDate}|${rowTitle}|${rowType}`;
+        }),
+      );
+
+      const rows = selectedRows
+      .map((item) => ({
         title: item.description,
         date: item.date,
         type: item.type,
-        notes: schoolPdfName ? `Importé depuis ${schoolPdfName}` : "Importé depuis calendrier scolaire",
+        notes: "Importé depuis CSSP",
         user_id: user.id,
         family_id: familyId,
-      }));
+      }))
+      .filter((item) => {
+        const key = `${item.date}|${item.title.trim().toLowerCase()}|${item.type}`;
+        return !existingKeySet.has(key);
+      });
 
       const importedCount = await createSpecialDaysBulk(supabase, rows);
       await refreshSpecialDays(supabase);
       setSchoolImportOpen(false);
+      setSelectedSchoolBoard("");
       setDetectedSchoolDates([]);
       setSelectedSchoolDateIds({});
-      setSchoolPdfName("");
-      setToast({ message: `✅ ${importedCount} dates importées dans votre calendrier !`, variant: "success" });
+      setCsspAlreadyImported(false);
+      setToast({ message: `✅ ${importedCount} dates scolaires ajoutées !`, variant: "success" });
     } catch (error) {
       setSchoolImportError(error instanceof Error ? error.message : "Erreur pendant l'import des dates.");
     } finally {
@@ -2051,7 +2198,7 @@ export default function CalendarPage() {
                 onClick={openSchoolImportModal}
                 className="inline-flex items-center justify-center rounded-xl border border-[#D0DFEE] bg-white px-4 py-2 text-sm font-semibold text-[#365A7B] transition hover:bg-[#F1F7FD]"
               >
-                📚 Importer calendrier scolaire
+                🏫 Calendrier scolaire
               </button>
               <button
                 type="button"
@@ -2930,11 +3077,11 @@ export default function CalendarPage() {
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
             <div className="mb-4 flex items-center justify-between gap-2">
-              <h2 className="text-xl font-semibold text-[#17324D]">📚 Importer calendrier scolaire</h2>
+              <h2 className="text-xl font-semibold text-[#17324D]">🏫 Calendrier scolaire</h2>
               <button
                 type="button"
                 onClick={closeSchoolImportModal}
-                disabled={isUploadingSchoolPdf || isImportingSchoolDates}
+                disabled={isLoadingSchoolBoardDates || isImportingSchoolDates}
                 className="rounded-lg border border-[#D0DFEE] px-2 py-1 text-sm text-[#365A7B] hover:bg-[#F1F7FD] disabled:cursor-not-allowed disabled:opacity-70"
               >
                 ✕
@@ -2948,22 +3095,43 @@ export default function CalendarPage() {
             )}
 
             <div className="rounded-xl border border-[#D7E6F4] bg-[#F8FBFF] p-4">
-              <SchoolPdfUploadButton
-                onFileSelected={onUploadSchoolCalendarPdf}
-                disabled={isUploadingSchoolPdf || isImportingSchoolDates}
-              />
-              {isUploadingSchoolPdf && <p className="mt-3 text-sm text-[#4A6783]">Analyse du PDF en cours...</p>}
-              {schoolPdfName && !isUploadingSchoolPdf && (
-                <p className="mt-3 text-sm text-[#4A6783]">Fichier analysé: {schoolPdfName}</p>
+              <label htmlFor="school-board" className="mb-2 block text-sm font-semibold text-[#2D4B68]">
+                Choisissez votre commission scolaire :
+              </label>
+              <select
+                id="school-board"
+                value={selectedSchoolBoard}
+                onChange={(event) => {
+                  void onSchoolBoardChange(event.target.value as SchoolBoardOption);
+                }}
+                disabled={isLoadingSchoolBoardDates || isImportingSchoolDates}
+                className="w-full rounded-xl border border-[#D8E4F0] bg-white px-3 py-2.5 text-[#1D3145] outline-none transition focus:border-[#4A90D9] focus:ring-4 focus:ring-[#4A90D9]/20 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <option value="">Sélectionner</option>
+                <option value="cssp">CSS des Patriotes (CSSP)</option>
+                <option value="other">Autre (bientôt disponible)</option>
+              </select>
+              {isLoadingSchoolBoardDates && <p className="mt-3 text-sm text-[#4A6783]">Chargement des dates CSSP...</p>}
+              {selectedSchoolBoard === "other" && !isLoadingSchoolBoardDates && (
+                <p className="mt-3 text-sm text-[#4A6783]">Autre (bientôt disponible).</p>
               )}
             </div>
 
-            {detectedSchoolDates.length > 0 && (
+            {selectedSchoolBoard === "cssp" && detectedSchoolDates.length > 0 && (
               <div className="mt-4 rounded-xl border border-[#D7E6F4] bg-white p-4">
-                <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">DATES DÉTECTÉES</p>
+                <p className="text-xs font-semibold tracking-[0.16em] text-[#5F81A3]">DATES CSSP DISPONIBLES</p>
+                {csspAlreadyImported && (
+                  <p className="mt-3 rounded-lg border border-[#F1D29B] bg-[#FFF9ED] px-3 py-2 text-sm text-[#8A6120]">
+                    📚 Calendrier CSSP déjà importé — Voulez-vous le réimporter ?
+                  </p>
+                )}
                 <div className="mt-3 space-y-2">
                   {detectedSchoolDates.map((item) => {
-                    const typeUi = specialTypeConfig[item.type];
+                    const typeUi = item.type === "pedagogique"
+                      ? { emoji: "🟡", label: "Journées pédagogiques", color: "#D9A74A" }
+                      : item.type === "scolaire"
+                        ? { emoji: "🔵", label: "Rentrée scolaire", color: "#4A90D9" }
+                        : { emoji: "🟢", label: "Vacances / Relâche", color: "#50C878" };
                     return (
                       <label
                         key={item.id}
@@ -2998,15 +3166,15 @@ export default function CalendarPage() {
                     <button
                       type="button"
                       onClick={onImportSelectedSchoolDates}
-                      disabled={isImportingSchoolDates}
+                      disabled={isImportingSchoolDates || isLoadingSchoolBoardDates}
                       className="rounded-xl bg-[#50C878] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
                     >
-                      {isImportingSchoolDates ? "Import..." : "✅ Importer les dates sélectionnées"}
+                      {isImportingSchoolDates ? "Ajout..." : "✅ Ajouter au mon calendrier"}
                     </button>
                     <button
                       type="button"
                       onClick={closeSchoolImportModal}
-                      disabled={isImportingSchoolDates}
+                      disabled={isImportingSchoolDates || isLoadingSchoolBoardDates}
                       className="rounded-xl border border-[#E3B4B8] bg-[#FFF4F5] px-4 py-2 text-sm font-semibold text-[#8D3E45] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
                     >
                       ❌ Annuler
