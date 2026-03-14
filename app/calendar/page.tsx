@@ -1183,7 +1183,7 @@ export default function CalendarPage() {
    await refreshSwapRequests();
    closeDecisionModal();
    setToast({
-    message: decisionType === "accept" ? "Demande acceptée." : "Demande refusée.",
+    message: decisionType === "accept" ? "Demande approuvée." : "Demande contestée.",
     variant: "success",
    });
   } catch (error) {
@@ -1195,7 +1195,7 @@ export default function CalendarPage() {
 
  const statusUi: Record<SwapStatus, { label: string; className: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = {
   en_attente: {
-   label: "En attente",
+    label: "En attente d'approbation",
    className: "border-[#D9D0C8] bg-[#F5F0EB] text-[#6B5D55]",
     icon: Clock,
   },
@@ -1205,7 +1205,7 @@ export default function CalendarPage() {
     icon: CheckCircle,
   },
   refusee: {
-   label: "Refusée",
+    label: "Contestée",
    className: "border-[#D9D0C8] bg-[#F5F0EB] text-[#A85C52]",
     icon: XCircle,
   },

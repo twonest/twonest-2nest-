@@ -575,6 +575,7 @@ export default function ExpensesPage() {
      row.reimbursed === true ||
      Boolean(row.reimbursed_at) ||
      statusText === "remboursé" ||
+         statusText === "remboursée" ||
      statusText === "reimbursed";
 
     const normalizedReceiptUrl = row.recu_url ?? null;
@@ -899,7 +900,7 @@ export default function ExpensesPage() {
      parent2_share_pct: parent2Pct,
      parent1_share_amount: parent1ShareAmount,
      parent2_share_amount: parent2ShareAmount,
-     status: "Non remboursé",
+         status: "En attente de remboursement",
     },
     {
      owner_id: user.id,
@@ -914,7 +915,7 @@ export default function ExpensesPage() {
      parent2_share_pct: parent2Pct,
      parent1_share_amount: parent1ShareAmount,
      parent2_share_amount: parent2ShareAmount,
-     status: "Non remboursé",
+         status: "En attente de remboursement",
     },
    ];
 
@@ -992,7 +993,7 @@ export default function ExpensesPage() {
    if (error) {
     const fallback = await supabase
      .from("expenses")
-     .update({ status: "Remboursé", reimbursed_at: nowIso })
+         .update({ status: "Remboursée", reimbursed_at: nowIso })
      .eq("id", expenseId);
 
     if (fallback.error) {
@@ -1611,7 +1612,7 @@ export default function ExpensesPage() {
              <div className="mb-3 space-y-1">
               <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusClass}`}>
                  {statusIcon}
-                 {reviewStatus === "approved" ? "Approuvée" : reviewStatus === "contested" ? "Refusée" : "En attente"}
+               {reviewStatus === "approved" ? "Approuvée" : reviewStatus === "contested" ? "Contestée" : "En attente d'approbation"}
               </span>
               <p className="text-xs text-[#6B5D55]">
                Demande créée le {new Date(review?.createdAt ?? expense.expenseDate).toLocaleString("fr-CA")}
@@ -1652,7 +1653,7 @@ export default function ExpensesPage() {
                 : "border border-[#D9D0C8] bg-[#F5F0EB] text-[#6B5D55]"
               }`}
              >
-              {expense.reimbursed ? "Remboursé" : "Non remboursé"}
+              {expense.reimbursed ? "Remboursée" : "En attente de remboursement"}
              </span>
              {expense.receiptUrl && getReceiptType(expense.receiptUrl) !== "pdf" && (
               <button
