@@ -517,7 +517,7 @@ export async function resolvePostAuthDestination(user: User): Promise<string> {
  await reconcilePendingFamilyInvites(user);
  const memberships = await fetchUserMemberships(user);
  if (memberships.length === 0) {
-  return "/spaces/new?first=1";
+  return "/espaces/nouveau?first=1";
  }
  return "/dashboard";
 }

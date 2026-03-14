@@ -40,9 +40,11 @@ export default function LoginPage() {
 
  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+  console.log("[Login] Clic sur Se connecter", { email: email.trim() });
 
   if (!canSubmit) {
    setErrorMessage("Entre ton email et ton mot de passe.");
+   console.error("[Login] Validation erreur: email ou mot de passe manquant");
    return;
   }
 
@@ -51,25 +53,37 @@ export default function LoginPage() {
 
   try {
    const supabase = getSupabaseBrowserClient();
-   const { error } = await supabase.auth.signInWithPassword({
+    const authResponse = await supabase.auth.signInWithPassword({
     email: email.trim(),
     password,
    });
 
+    console.log("[Login] Reponse Supabase Auth", {
+     hasSession: Boolean(authResponse.data.session),
+     hasUser: Boolean(authResponse.data.user),
+     error: authResponse.error?.message ?? null,
+    });
+
+    const { error } = authResponse;
+
    if (error) {
+     console.error("[Login] Erreur Supabase Auth", error);
     setErrorMessage(error.message);
     return;
    }
 
   const { data } = await supabase.auth.getUser();
   if (!data.user) {
+    console.error("[Login] Erreur: utilisateur absent apres connexion");
    setErrorMessage("Session introuvable après connexion.");
    return;
   }
 
   const destination = await resolvePostAuthDestination(data.user);
+    console.log("[Login] Redirection post-auth", { destination });
   router.replace(destination);
   } catch (error) {
+    console.error("[Login] Exception inattendue", error);
    setErrorMessage(
     error instanceof Error
      ? error.message
@@ -137,6 +151,7 @@ export default function LoginPage() {
 
      <button
       type="submit"
+      onClick={() => console.log("[Login] Bouton Se connecter clique")}
       disabled={isLoading || Boolean(configError)}
       className="mt-2 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#7C6B5D]/30 disabled:cursor-not-allowed disabled:opacity-70"
      >
