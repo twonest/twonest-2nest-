@@ -40,6 +40,7 @@ type SupabaseDocumentRow = {
   enfant?: string;
   description?: string;
   short_description?: string;
+  fichier_url?: string;
   file_url?: string;
   url?: string;
   public_url?: string;
@@ -143,6 +144,15 @@ function extractMissingColumn(message: string): string | null {
   return cacheMatch?.[1] ?? null;
 }
 
+function extractStoragePathFromPublicUrl(fileUrl: string): string {
+  const marker = "/storage/v1/object/public/documents/";
+  const index = fileUrl.indexOf(marker);
+  if (index === -1) {
+    return "";
+  }
+  return decodeURIComponent(fileUrl.slice(index + marker.length));
+}
+
 async function resolveCurrentFamilyId(userId: string): Promise<string> {
   const supabase = getSupabaseBrowserClient();
   const byUserId = await supabase.from("profiles").select("family_id").eq("user_id", userId).maybeSingle();
@@ -190,7 +200,7 @@ export default function DocumentsPage() {
     return () => clearTimeout(timeout);
   }, [toast]);
 
-  const refreshDocuments = async (userId: string, familyId: string) => {
+  const refreshDocuments = async (userId: string, familyId: string, source: "startup" | "after-insert" | "manual" = "manual") => {
     const supabase = getSupabaseBrowserClient();
 
     const fetchWithFamily = await supabase
@@ -199,32 +209,39 @@ export default function DocumentsPage() {
       .eq("family_id", familyId)
       .order("created_at", { ascending: false });
 
-    let rows = fetchWithFamily.data as SupabaseDocumentRow[] | null;
-    let error = fetchWithFamily.error;
+    const fetchByUser = await supabase
+      .from("documents")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
 
-    if (error) {
-      const fallback = await supabase
-        .from("documents")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-      rows = fallback.data as SupabaseDocumentRow[] | null;
-      error = fallback.error;
+    if (fetchWithFamily.error && fetchByUser.error) {
+      throw new Error(fetchByUser.error.message || fetchWithFamily.error.message);
     }
 
-    if (error) {
-      throw new Error(error.message);
+    const rowMap = new Map<string, SupabaseDocumentRow>();
+    const allRows = [
+      ...((fetchWithFamily.data as SupabaseDocumentRow[] | null) ?? []),
+      ...((fetchByUser.data as SupabaseDocumentRow[] | null) ?? []),
+    ];
+
+    for (const row of allRows) {
+      const id = row.id ? String(row.id) : "";
+      if (!id) {
+        continue;
+      }
+      rowMap.set(id, row);
     }
 
-    const mapped = (rows ?? [])
+    const mapped = Array.from(rowMap.values())
       .map((row): DocumentItem | null => {
         const id = row.id ? String(row.id) : "";
         const title = row.title ?? row.titre ?? "";
-        const fileUrl = row.file_url ?? row.url ?? row.public_url ?? "";
-        const filePath = row.file_path ?? row.storage_path ?? "";
+        const fileUrl = row.fichier_url ?? row.file_url ?? row.url ?? row.public_url ?? "";
+        const filePath = row.file_path ?? row.storage_path ?? extractStoragePathFromPublicUrl(fileUrl);
         const createdAt = row.created_at ?? row.uploaded_at ?? row.date_ajout ?? "";
 
-        if (!id || !title || !fileUrl || !filePath || !createdAt) {
+        if (!id || !title || !fileUrl || !createdAt) {
           return null;
         }
 
@@ -246,9 +263,15 @@ export default function DocumentsPage() {
           uploaderRole: uploaderRoleRaw ? normalizeParentRole(uploaderRoleRaw) : inferredRole,
         };
       })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .filter((item): item is DocumentItem => item !== null);
 
+    if (source === "startup") {
+      console.log("[documents] Documents chargés au démarrage:", mapped);
+    }
+
     setDocuments(mapped);
+    return mapped;
   };
 
   useEffect(() => {
@@ -286,7 +309,7 @@ export default function DocumentsPage() {
       setCurrentFamilyId(familyId);
 
       try {
-        await refreshDocuments(currentUser.id, familyId);
+        await refreshDocuments(currentUser.id, familyId, "startup");
       } catch (error) {
         setFormError(error instanceof Error ? error.message : "Impossible de charger les documents.");
       } finally {
@@ -365,7 +388,7 @@ export default function DocumentsPage() {
     try {
       const supabase = getSupabaseBrowserClient();
       const safeName = docFile.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-      const filePath = `${currentFamilyId}/${user.id}/${Date.now()}-${safeName}`;
+      const filePath = `${Date.now()}-${safeName}`;
 
       const uploadResult = await supabase.storage
         .from("documents")
@@ -377,6 +400,7 @@ export default function DocumentsPage() {
 
       const { data: urlData } = supabase.storage.from("documents").getPublicUrl(filePath);
       const publicUrl = urlData.publicUrl;
+      console.log("[documents] URL générée après upload:", publicUrl);
 
       let payload: Record<string, unknown> = {
         title: docTitle.trim(),
@@ -384,6 +408,7 @@ export default function DocumentsPage() {
         child_name: docChildName.trim() || null,
         description: docDescription.trim() || null,
         file_path: filePath,
+        fichier_url: publicUrl,
         file_url: publicUrl,
         mime_type: docFile.type || null,
         user_id: user.id,
@@ -394,16 +419,22 @@ export default function DocumentsPage() {
         shared_with_legal: shareWithLegal,
       };
 
+      const protectedColumns = new Set(["fichier_url", "file_url", "file_path", "title", "category", "user_id"]);
       let insertError: string | null = null;
       for (let attempt = 0; attempt < 12; attempt += 1) {
-        const result = await supabase.from("documents").insert(payload);
+        const result = await supabase.from("documents").insert(payload).select("*").maybeSingle();
+        console.log("[documents] Réponse Supabase après insert:", result);
         if (!result.error) {
           insertError = null;
           break;
         }
 
         const missingColumn = extractMissingColumn(result.error.message);
-        if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+        if (
+          missingColumn &&
+          Object.prototype.hasOwnProperty.call(payload, missingColumn) &&
+          !protectedColumns.has(missingColumn)
+        ) {
           const nextPayload = { ...payload };
           delete nextPayload[missingColumn];
           payload = nextPayload;
@@ -419,7 +450,7 @@ export default function DocumentsPage() {
         throw new Error(insertError);
       }
 
-      await refreshDocuments(user.id, currentFamilyId);
+      await refreshDocuments(user.id, currentFamilyId, "after-insert");
       setToast({ message: "✅ Document ajouté.", variant: "success" });
       setFormOpen(false);
       resetForm();
@@ -448,7 +479,7 @@ export default function DocumentsPage() {
         throw new Error(error.message);
       }
 
-      await refreshDocuments(user.id, currentFamilyId);
+      await refreshDocuments(user.id, currentFamilyId, "manual");
       setToast({ message: "✅ Document supprimé.", variant: "success" });
     } catch (error) {
       setToast({
