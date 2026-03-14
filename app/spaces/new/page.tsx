@@ -1,12 +1,12 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { FAMILY_TYPE_OPTIONS, type FamilyType } from "@/lib/family";
 import { useFamily } from "@/components/FamilyProvider";
 
-export default function NewSpacePage() {
+function NewSpaceForm() {
  const router = useRouter();
  const searchParams = useSearchParams();
  const { user, refreshFamilies, loading } = useFamily();
@@ -140,5 +140,13 @@ export default function NewSpacePage() {
     </form>
    </main>
   </div>
+ );
+}
+
+export default function NewSpacePage() {
+ return (
+  <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-[#F5F0EB] px-6"><p className="text-sm font-medium text-[#6B5D55]">Chargement...</p></div>}>
+   <NewSpaceForm />
+  </Suspense>
  );
 }
