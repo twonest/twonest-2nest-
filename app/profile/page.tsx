@@ -85,8 +85,8 @@ function normalizeRole(value: string | undefined): ParentRole {
 
 function rowToProfile(row: ProfileRow, fallbackEmail: string): ProfileData {
   return {
-    firstName: row.first_name ?? row.prenom ?? "",
-    lastName: row.last_name ?? row.nom ?? "",
+    firstName: row.prenom ?? row.first_name ?? "",
+    lastName: row.nom ?? row.last_name ?? "",
     email: row.email ?? fallbackEmail,
     phone: row.phone ?? row.telephone ?? "",
     street: row.street ?? row.address_line1 ?? "",
@@ -158,7 +158,7 @@ export default function ProfilePage() {
 
     const row = data[0];
     setCoParent({
-      firstName: row.first_name ?? row.prenom ?? "",
+      firstName: row.prenom ?? row.first_name ?? "",
       email: row.email ?? "",
       street: row.street ?? row.address_line1 ?? "",
       city: row.city ?? row.ville ?? "",
@@ -196,30 +196,49 @@ export default function ProfilePage() {
       setUser(authUser);
       setCheckingSession(false);
 
-      const byUserId = await supabase.from("profiles").select("*").eq("user_id", authUser.id).limit(1);
+      const nowIso = new Date().toISOString();
+
+      const byUserId = await supabase.from("profiles").select("*").eq("user_id", authUser.id).maybeSingle();
+      if (!byUserId.error && byUserId.data?.id && byUserId.data.id !== authUser.id) {
+        await supabase
+          .from("profiles")
+          .update({ id: authUser.id, updated_at: nowIso })
+          .eq("id", byUserId.data.id);
+      }
 
       let row: ProfileRow | null = null;
-      if (!byUserId.error && byUserId.data && byUserId.data.length > 0) {
-        row = byUserId.data[0] as ProfileRow;
-      } else {
-        const byId = await supabase.from("profiles").select("*").eq("id", authUser.id).limit(1);
-        if (!byId.error && byId.data && byId.data.length > 0) {
-          row = byId.data[0] as ProfileRow;
+      const byId = await supabase.from("profiles").select("*").eq("id", authUser.id).maybeSingle();
+      if (!byId.error && byId.data) {
+        row = byId.data as ProfileRow;
+      }
+
+      if (!row) {
+        const createPayload = {
+          id: authUser.id,
+          user_id: authUser.id,
+          email: authUser.email ?? "",
+          prenom: "",
+          nom: "",
+          first_name: "",
+          last_name: "",
+          country: "Canada",
+          pays: "Canada",
+          role: "parent1",
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+
+        await supabase.from("profiles").insert(createPayload);
+
+        const created = await supabase.from("profiles").select("*").eq("id", authUser.id).maybeSingle();
+        if (!created.error && created.data) {
+          row = created.data as ProfileRow;
         }
       }
 
-      if (row) {
-        const mapped = rowToProfile(row, authUser.email ?? "");
-        setProfile(mapped);
-        await refreshCoParent(mapped.role, supabase, authUser);
-      } else {
-        const initial = {
-          ...EMPTY_PROFILE,
-          email: authUser.email ?? "",
-        };
-        setProfile(initial);
-        await refreshCoParent(initial.role, supabase, authUser);
-      }
+      const mapped = row ? rowToProfile(row, authUser.email ?? "") : { ...EMPTY_PROFILE, email: authUser.email ?? "" };
+      setProfile(mapped);
+      await refreshCoParent(mapped.role, supabase, authUser);
 
       setIsLoadingProfile(false);
     };
@@ -293,75 +312,71 @@ export default function ProfilePage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const common = {
+      const nowIso = new Date().toISOString();
+      const firstName = profile.firstName.trim();
+      const lastName = profile.lastName.trim();
+
+      const payload = {
+        id: user.id,
+        user_id: user.id,
         email: profile.email,
+        prenom: firstName,
+        nom: lastName,
+        first_name: firstName,
+        last_name: lastName,
+        phone: profile.phone.trim(),
+        telephone: profile.phone.trim(),
+        street: profile.street.trim(),
+        address_line1: profile.street.trim(),
+        city: profile.city.trim(),
+        ville: profile.city.trim(),
+        province: profile.province.trim(),
+        postal_code: profile.postalCode.trim(),
+        code_postal: profile.postalCode.trim(),
+        country: profile.country.trim(),
+        pays: profile.country.trim(),
         role: profile.role,
-        updated_at: new Date().toISOString(),
+        avatar_url: profile.avatarUrl,
+        photo_url: profile.avatarUrl,
+        updated_at: nowIso,
       };
 
-      const payloadVariants = [
-        {
-          ...common,
-          user_id: user.id,
-          first_name: profile.firstName.trim(),
-          last_name: profile.lastName.trim(),
-          phone: profile.phone.trim(),
-          street: profile.street.trim(),
-          city: profile.city.trim(),
-          province: profile.province.trim(),
-          postal_code: profile.postalCode.trim(),
-          country: profile.country.trim(),
-          avatar_url: profile.avatarUrl,
-        },
-        {
-          ...common,
-          id: user.id,
-          prenom: profile.firstName.trim(),
-          nom: profile.lastName.trim(),
-          telephone: profile.phone.trim(),
-          address_line1: profile.street.trim(),
-          ville: profile.city.trim(),
-          province: profile.province.trim(),
-          code_postal: profile.postalCode.trim(),
-          pays: profile.country.trim(),
-          photo_url: profile.avatarUrl,
-        },
-      ];
+      const existing = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
 
-      const conflictTargets: Array<"user_id" | "id"> = ["user_id", "id"];
-      let saved = false;
-      let lastError: string | null = null;
-
-      for (let index = 0; index < payloadVariants.length; index += 1) {
-        const payload = payloadVariants[index];
-        const conflict = conflictTargets[index];
-        const { error } = await supabase.from("profiles").upsert(payload, { onConflict: conflict });
-
-        if (!error) {
-          saved = true;
-          break;
-        }
-
-        lastError = error.message;
+      if (existing.error) {
+        setFormError(existing.error.message);
+        return;
       }
 
-      if (!saved) {
-        setFormError(lastError ?? "Impossible d'enregistrer le profil.");
-        return;
+      if (existing.data?.id) {
+        const { error } = await supabase.from("profiles").update(payload).eq("id", user.id);
+        if (error) {
+          setFormError(error.message);
+          return;
+        }
+      } else {
+        const { error } = await supabase.from("profiles").insert({
+          ...payload,
+          created_at: nowIso,
+        });
+        if (error) {
+          setFormError(error.message);
+          return;
+        }
       }
 
       await supabase.auth.updateUser({
         data: {
-          first_name: profile.firstName.trim(),
-          last_name: profile.lastName.trim(),
-          prenom: profile.firstName.trim(),
-          nom: profile.lastName.trim(),
-          name: `${profile.firstName.trim()} ${profile.lastName.trim()}`.trim(),
+          first_name: firstName,
+          last_name: lastName,
+          prenom: firstName,
+          nom: lastName,
+          name: `${firstName} ${lastName}`.trim(),
         },
       });
 
       await refreshCoParent(profile.role, supabase, user);
-      setToast({ message: "Profil enregistré.", variant: "success" });
+      setToast({ message: "✅ Profil sauvegardé !", variant: "success" });
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Erreur pendant l'enregistrement du profil.");
     } finally {
