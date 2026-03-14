@@ -730,7 +730,7 @@ export default function ChildrenPage() {
        }}
        className="inline-flex items-center justify-center rounded-xl bg-[#F59E66] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(245,158,102,0.35)] transition hover:brightness-105"
       >
-        <PlusCircle size={16} className="mr-2" />
+        <PlusCircle size={16} className="mr-2 text-white" />
         Ajouter un enfant
       </button>
      </div>

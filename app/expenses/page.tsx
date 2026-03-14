@@ -1422,7 +1422,7 @@ export default function ExpensesPage() {
         onClick={() => setIsAddExpenseFormOpen(true)}
         className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
        >
-          <PlusCircle size={16} className="mr-2 inline-flex" />
+          <PlusCircle size={16} className="mr-2 inline-flex text-white" />
           Ajouter une dépense
        </button>
 
@@ -1722,7 +1722,7 @@ export default function ExpensesPage() {
         onClick={() => setIsAddExpenseFormOpen(true)}
         className="mt-4 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
        >
-          <PlusCircle size={16} className="mr-2 inline-flex" />
+          <PlusCircle size={16} className="mr-2 inline-flex text-white" />
           Ajouter une dépense
        </button>
 

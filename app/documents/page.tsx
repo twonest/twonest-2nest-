@@ -590,7 +590,7 @@ export default function DocumentsPage() {
        }}
        className="inline-flex items-center justify-center rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105"
       >
-        <PlusCircle size={16} className="mr-2" />
+      <PlusCircle size={16} className="mr-2 text-white" />
         Ajouter un document
       </button>
      </div>
