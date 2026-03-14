@@ -136,7 +136,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
          isActive
           ? "bg-[#7C6B5D] text-white"
-          : "text-white/75 hover:text-white hover:bg-[#7C6B5D]/40"
+          : "text-white hover:bg-[#7C6B5D]/50"
         }`}
        >
         <Icon size={18} />
