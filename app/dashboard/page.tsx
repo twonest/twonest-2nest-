@@ -14,7 +14,7 @@ type DashboardAction = {
 
 type ChildSummary = {
   id: string;
-  firstName: string;
+  displayName: string;
 };
 
 const GLOBAL_CHILD_FILTER_KEY = "twonest.selectedChildId";
@@ -109,9 +109,12 @@ export default function DashboardPage() {
         }
 
         const firstNameRaw = row.first_name ?? row.prenom ?? row.name;
+        const lastNameRaw = row.last_name ?? row.nom;
         const firstName = typeof firstNameRaw === "string" && firstNameRaw.trim().length > 0 ? firstNameRaw.trim() : "Enfant";
+        const lastName = typeof lastNameRaw === "string" && lastNameRaw.trim().length > 0 ? lastNameRaw.trim() : "";
+        const displayName = `${firstName} ${lastName}`.trim();
         if (!dedupe.has(childId)) {
-          dedupe.set(childId, { id: childId, firstName });
+          dedupe.set(childId, { id: childId, displayName });
         }
       }
       setChildren(Array.from(dedupe.values()));
@@ -149,7 +152,7 @@ export default function DashboardPage() {
     }
 
     const selectedChild = children.find((item) => item.id === value);
-    window.localStorage.setItem(GLOBAL_CHILD_FILTER_NAME_KEY, selectedChild?.firstName ?? "");
+    window.localStorage.setItem(GLOBAL_CHILD_FILTER_NAME_KEY, selectedChild?.displayName ?? "");
   };
 
   const handleSignOut = async () => {
@@ -207,7 +210,7 @@ export default function DashboardPage() {
             >
               <option value="all">Tous les enfants</option>
               {children.map((child) => (
-                <option key={child.id} value={child.id}>{child.firstName}</option>
+                <option key={child.id} value={child.id}>{child.displayName}</option>
               ))}
             </select>
           </div>

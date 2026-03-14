@@ -84,6 +84,24 @@ type ToastState = {
 
 const SHARED_CHILD_KEY = "twonest.selectedChildId";
 const SHARED_CHILD_NAME_KEY = "twonest.selectedChildName";
+const SCHOOL_LEVEL_OPTIONS = [
+  { value: "GARD", label: "GARD — Garderie" },
+  { value: "PRES", label: "PRES — Préscolaire" },
+  { value: "MAT4", label: "MAT4 — Maternelle 4 ans" },
+  { value: "MAT5", label: "MAT5 — Maternelle 5 ans" },
+  { value: "P1", label: "P1 — 1re année primaire" },
+  { value: "P2", label: "P2 — 2e année primaire" },
+  { value: "P3", label: "P3 — 3e année primaire" },
+  { value: "P4", label: "P4 — 4e année primaire" },
+  { value: "P5", label: "P5 — 5e année primaire" },
+  { value: "P6", label: "P6 — 6e année primaire" },
+  { value: "S1", label: "S1 — Secondaire 1" },
+  { value: "S2", label: "S2 — Secondaire 2" },
+  { value: "S3", label: "S3 — Secondaire 3" },
+  { value: "S4", label: "S4 — Secondaire 4" },
+  { value: "S5", label: "S5 — Secondaire 5" },
+  { value: "AUTRE", label: "AUTRE — Autre" },
+] as const;
 
 function normalizeParentRole(value: string | null | undefined): ParentRole {
   const normalized = (value ?? "").toLowerCase();
@@ -203,6 +221,7 @@ export default function ChildrenPage() {
   const [configError, setConfigError] = useState("");
   const [currentFamilyId, setCurrentFamilyId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<ParentRole>("parent1");
+  const [defaultFamilyName, setDefaultFamilyName] = useState("");
 
   const [children, setChildren] = useState<ChildProfile[]>([]);
   const [selectedChildId, setSelectedChildId] = useState("");
@@ -393,6 +412,13 @@ export default function ChildrenPage() {
         : null;
       setCurrentRole(normalizeParentRole((roleByUser.data?.role ?? roleById?.data?.role ?? null) as string | null));
 
+      const profileByUser = await supabase.from("profiles").select("last_name, nom").eq("user_id", currentUser.id).maybeSingle();
+      const profileById = profileByUser.error || !profileByUser.data
+        ? await supabase.from("profiles").select("last_name, nom").eq("id", currentUser.id).maybeSingle()
+        : null;
+      const lastName = (profileByUser.data?.last_name ?? profileByUser.data?.nom ?? profileById?.data?.last_name ?? profileById?.data?.nom ?? "") as string;
+      setDefaultFamilyName(lastName.trim());
+
       const familyId = await resolveCurrentFamilyId(currentUser.id);
       setCurrentFamilyId(familyId);
 
@@ -454,13 +480,14 @@ export default function ChildrenPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
+      const lastNameToSave = newLastName.trim() || defaultFamilyName || null;
       let payload: Record<string, unknown> = {
         user_id: user.id,
         family_id: currentFamilyId,
         first_name: newFirstName.trim(),
         prenom: newFirstName.trim(),
-        last_name: newLastName.trim() || null,
-        nom: newLastName.trim() || null,
+        last_name: lastNameToSave,
+        nom: lastNameToSave,
         birth_date: newBirthDate || null,
         date_naissance: newBirthDate || null,
       };
@@ -520,11 +547,12 @@ export default function ChildrenPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
+      const lastNameToSave = selectedChild.lastName.trim() || defaultFamilyName || null;
       let payload: Record<string, unknown> = {
         first_name: selectedChild.firstName.trim(),
         prenom: selectedChild.firstName.trim(),
-        last_name: selectedChild.lastName.trim() || null,
-        nom: selectedChild.lastName.trim() || null,
+        last_name: lastNameToSave,
+        nom: lastNameToSave,
         birth_date: selectedChild.birthDate || null,
         date_naissance: selectedChild.birthDate || null,
         school_name: selectedChild.schoolName.trim() || null,
@@ -692,7 +720,12 @@ export default function ChildrenPage() {
             </Link>
             <button
               type="button"
-              onClick={() => setIsAddOpen(true)}
+              onClick={() => {
+                if (!newLastName && defaultFamilyName) {
+                  setNewLastName(defaultFamilyName);
+                }
+                setIsAddOpen(true);
+              }}
               className="inline-flex items-center justify-center rounded-xl bg-[#F59E66] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(245,158,102,0.35)] transition hover:brightness-105"
             >
               ➕ Ajouter un enfant
@@ -732,7 +765,7 @@ export default function ChildrenPage() {
                     )}
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-[#5D4127]">{child.firstName || "Sans prénom"}</p>
+                    <p className="text-sm font-semibold text-[#5D4127]">{`${child.firstName} ${child.lastName}`.trim() || "Sans prénom"}</p>
                     <p className="text-xs text-[#8B6E52]">{toAgeLabel(child.birthDate) || "Âge inconnu"}</p>
                   </div>
                 </button>
@@ -864,11 +897,16 @@ export default function ChildrenPage() {
 
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-[#6E5237]">Niveau scolaire</label>
-                  <input
+                  <select
                     value={selectedChild.schoolLevel}
                     onChange={(event) => updateSelectedChild((current) => ({ ...current, schoolLevel: event.target.value }))}
                     className="w-full rounded-xl border border-[#E6D8CA] px-3 py-2.5 text-[#4B3B2A] outline-none focus:border-[#F59E66] focus:ring-4 focus:ring-[#F59E66]/20"
-                  />
+                  >
+                    <option value="">Sélectionner un niveau</option>
+                    {SCHOOL_LEVEL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="sm:col-span-2">
