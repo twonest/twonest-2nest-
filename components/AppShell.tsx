@@ -122,7 +122,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   <div className="min-h-screen bg-[#F5F0EB] text-[#2C2420]">
    <aside className="fixed inset-y-0 left-0 z-40 flex w-[240px] flex-col border-r border-[#7C6B5D] bg-[#2C2420] px-4 py-5">
     <div className="px-2">
-     <p className="text-2xl font-bold tracking-tight text-white">2nest</p>
+     <p className="text-2xl font-bold tracking-tight text-[#EDE8E3]">2nest</p>
     </div>
 
     <nav className="mt-6 flex-1 space-y-1">
@@ -135,8 +135,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         href={route.href}
         className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
          isActive
-          ? "bg-[#7C6B5D] text-white"
-          : "text-white hover:bg-[#7C6B5D]/50"
+          ? "bg-[#7C6B5D] text-[#EDE8E3]"
+          : "text-[#EDE8E3] hover:bg-[#7C6B5D]/50"
         }`}
        >
         <Icon size={18} />
@@ -153,13 +153,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         // eslint-disable-next-line @next/next/no-img-element
         <img src={avatarUrl} alt="Profil" className="h-full w-full object-cover" />
        ) : (
-        <div className="flex h-full w-full items-center justify-center text-white">
+        <div className="flex h-full w-full items-center justify-center text-[#EDE8E3]">
          <UserCircle size={18} />
         </div>
        )}
       </div>
       <div className="min-w-0">
-       <p className="truncate text-sm font-semibold text-white">{firstName}</p>
+       <p className="truncate text-sm font-semibold text-[#EDE8E3]">{firstName}</p>
        <button
         type="button"
         onClick={onSignOut}

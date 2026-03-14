@@ -45,6 +45,10 @@ span {
   color: #6b5d55;
 }
 
+aside span {
+  color: inherit;
+}
+
 button {
   border-radius: 8px;
 }
