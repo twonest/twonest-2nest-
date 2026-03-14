@@ -6,7 +6,7 @@ import moment from "moment";
 import "moment/locale/fr";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Download, Eye, Pencil, PlusCircle, RefreshCcw, School, Trash2, X } from "lucide-react";
+import { ArrowLeft, BookOpen, CheckCircle, ChevronLeft, ChevronRight, Clock, Download, Eye, Loader, Pencil, PlusCircle, RefreshCcw, School, Trash2, X, XCircle } from "lucide-react";
 import { Calendar, momentLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import type { User } from "@supabase/supabase-js";
@@ -1193,18 +1193,21 @@ export default function CalendarPage() {
   }
  };
 
- const statusUi: Record<SwapStatus, { label: string; className: string }> = {
+ const statusUi: Record<SwapStatus, { label: string; className: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = {
   en_attente: {
    label: "En attente",
    className: "border-[#D9D0C8] bg-[#F5F0EB] text-[#6B5D55]",
+    icon: Clock,
   },
   acceptee: {
-   label: "Acceptée",
+    label: "Approuvée",
    className: "border-[#D9D0C8] bg-[#EDE8E3] text-[#6B8F71]",
+    icon: CheckCircle,
   },
   refusee: {
    label: "Refusée",
    className: "border-[#D9D0C8] bg-[#F5F0EB] text-[#A85C52]",
+    icon: XCircle,
   },
  };
 
@@ -2167,6 +2170,7 @@ export default function CalendarPage() {
         const isMine = request.requesterUserId === user?.id;
         const canModerate = !isMine && request.status === "en_attente";
         const statusInfo = statusUi[request.status];
+      const StatusIcon = statusInfo.icon;
 
         return (
          <article key={request.id} className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-4">
@@ -2183,6 +2187,7 @@ export default function CalendarPage() {
            </div>
 
            <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold ${statusInfo.className}`}>
+                  <StatusIcon size={12} />
             <span>{statusInfo.label}</span>
            </span>
           </div>
@@ -2799,7 +2804,7 @@ export default function CalendarPage() {
         disabled={isApplyingSchedule}
         className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
        >
-            {isApplyingSchedule ? "Application..." : "Appliquer au calendrier"}
+            {isApplyingSchedule ? <><Loader size={14} className="mr-2 inline animate-spin" />En cours...</> : "Appliquer au calendrier"}
        </button>
       </form>
      </div>

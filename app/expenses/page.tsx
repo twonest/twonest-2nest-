@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
-import { ArrowLeft, ChevronLeft, ChevronRight, Download, Eye, PlusCircle, Settings, Trash2 } from "lucide-react";
+import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, Clock, Download, Eye, PlusCircle, Settings, Trash2, XCircle } from "lucide-react";
 import jsPDF from "jspdf";
 import {
  Bar,
@@ -1598,10 +1598,20 @@ export default function ExpensesPage() {
                ? "border-[#D9D0C8] bg-[#F5F0EB] text-[#A85C52]"
                : "border-[#D9D0C8] bg-[#F5F0EB] text-[#6B5D55]";
 
+              const statusIcon =
+               reviewStatus === "approved" ? (
+                <CheckCircle size={12} className="mr-1" />
+               ) : reviewStatus === "contested" ? (
+                <XCircle size={12} className="mr-1" />
+               ) : (
+                <Clock size={12} className="mr-1" />
+               );
+
             return (
              <div className="mb-3 space-y-1">
               <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusClass}`}>
-               {reviewStatus === "approved" ? " Approuvée" : reviewStatus === "contested" ? " Contestée" : " En attente"}
+                 {statusIcon}
+                 {reviewStatus === "approved" ? "Approuvée" : reviewStatus === "contested" ? "Refusée" : "En attente"}
               </span>
               <p className="text-xs text-[#6B5D55]">
                Demande créée le {new Date(review?.createdAt ?? expense.expenseDate).toLocaleString("fr-CA")}

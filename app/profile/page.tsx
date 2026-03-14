@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
-import { ArrowLeft, UserCircle } from "lucide-react";
+import { ArrowLeft, Loader, UserCircle } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type ParentRole = "parent1" | "parent2";
@@ -458,7 +458,16 @@ export default function ProfilePage() {
          onChange={onUploadPhoto}
          className="w-full text-sm text-[#6B5D55] file:mr-3 file:rounded-lg file:border-0 file:bg-[#EDE8E3] file:px-3 file:py-2 file:text-[#7C6B5D]"
         />
-        <p className="mt-1 text-xs text-[#6B5D55]">{isUploadingPhoto ? "Upload en cours..." : "Formats image classiques acceptés"}</p>
+        <p className="mt-1 text-xs text-[#6B5D55]">
+         {isUploadingPhoto ? (
+          <span className="inline-flex items-center">
+           <Loader size={12} className="mr-1 animate-spin" />
+           En cours...
+          </span>
+         ) : (
+          "Formats image classiques acceptés"
+         )}
+        </p>
        </div>
       </div>
 
