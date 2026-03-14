@@ -202,6 +202,7 @@ export default function DocumentsPage() {
 
   const refreshDocuments = async (userId: string, familyId: string, source: "startup" | "after-insert" | "manual" = "manual") => {
     const supabase = getSupabaseBrowserClient();
+    console.log("[documents] Filtres de chargement:", { user_id: userId, family_id: familyId, source });
 
     const fetchWithFamily = await supabase
       .from("documents")
