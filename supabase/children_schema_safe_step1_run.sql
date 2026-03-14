@@ -87,35 +87,107 @@ begin
 end;
 $$;
 
-drop trigger if exists trg_set_children_updated_at on public.children;
-create trigger trg_set_children_updated_at
-before update on public.children
-for each row
-execute function public.set_children_updated_at();
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_trigger
+    where tgname = 'trg_set_children_updated_at'
+      and tgrelid = 'public.children'::regclass
+      and not tgisinternal
+  ) then
+    create trigger trg_set_children_updated_at
+    before update on public.children
+    for each row
+    execute function public.set_children_updated_at();
+  end if;
+end;
+$$;
 
 alter table public.children enable row level security;
 
-drop policy if exists "children_select_own" on public.children;
-create policy "children_select_own"
-on public.children
-for select
-using (auth.uid() = user_id);
+do $$
+begin
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'children'
+      and policyname = 'children_select_own'
+  ) then
+    alter policy "children_select_own"
+    on public.children
+    using (auth.uid() = user_id);
+  else
+    create policy "children_select_own"
+    on public.children
+    for select
+    using (auth.uid() = user_id);
+  end if;
+end;
+$$;
 
-drop policy if exists "children_insert_own" on public.children;
-create policy "children_insert_own"
-on public.children
-for insert
-with check (auth.uid() = user_id);
+do $$
+begin
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'children'
+      and policyname = 'children_insert_own'
+  ) then
+    alter policy "children_insert_own"
+    on public.children
+    with check (auth.uid() = user_id);
+  else
+    create policy "children_insert_own"
+    on public.children
+    for insert
+    with check (auth.uid() = user_id);
+  end if;
+end;
+$$;
 
-drop policy if exists "children_update_own" on public.children;
-create policy "children_update_own"
-on public.children
-for update
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+do $$
+begin
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'children'
+      and policyname = 'children_update_own'
+  ) then
+    alter policy "children_update_own"
+    on public.children
+    using (auth.uid() = user_id)
+    with check (auth.uid() = user_id);
+  else
+    create policy "children_update_own"
+    on public.children
+    for update
+    using (auth.uid() = user_id)
+    with check (auth.uid() = user_id);
+  end if;
+end;
+$$;
 
-drop policy if exists "children_delete_own" on public.children;
-create policy "children_delete_own"
-on public.children
-for delete
-using (auth.uid() = user_id);
+do $$
+begin
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'children'
+      and policyname = 'children_delete_own'
+  ) then
+    alter policy "children_delete_own"
+    on public.children
+    using (auth.uid() = user_id);
+  else
+    create policy "children_delete_own"
+    on public.children
+    for delete
+    using (auth.uid() = user_id);
+  end if;
+end;
+$$;
