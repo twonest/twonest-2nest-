@@ -169,7 +169,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
     <div className="min-w-0">
      <p className="truncate font-medium">{activeFamily?.name ?? "Choisir un espace"}</p>
      {currentMembership && (
-    <p className="truncate text-xs text-[#A89080]">
+    <p className="truncate text-xs text-[#EDE8E3]">
      {familyRoleLabel(currentMembership.role)} · {familyTypeLabel(activeFamily?.type ?? "family")}
     </p>
      )}
@@ -191,12 +191,12 @@ function ShellContent({ children }: { children: React.ReactNode }) {
       router.refresh();
        }}
        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
-      isActive ? "bg-[#7C6B5D] text-[#FFFFFF]" : "text-[#EDE8E3] hover:bg-[#3D3028]"
+      isActive ? "bg-[#7C6B5D] text-[#EDE8E3]" : "text-[#EDE8E3] hover:bg-[#3D3028]"
        }`}
       >
        <div className="min-w-0">
       <p className="truncate font-medium">{membership.family.name}</p>
-      <p className={`truncate text-xs ${isActive ? "text-[#FFFFFF]" : "text-[#F5F0EB]"}`}>{familyRoleLabel(membership.role)}</p>
+      <p className="truncate text-xs text-[#EDE8E3]">{familyRoleLabel(membership.role)}</p>
        </div>
        {isActive ? <span className="text-xs font-semibold">✓</span> : null}
       </button>
