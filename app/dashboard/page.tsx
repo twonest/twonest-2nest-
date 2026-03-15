@@ -86,12 +86,12 @@ export default function DashboardPage() {
 
    setUser(data.user);
 
-  const familyId = activeFamilyId ?? data.user.id;
-   const byFamily = await supabase.from("children").select("*").eq("family_id", familyId).order("created_at", { ascending: true });
-   const byUser = await supabase.from("children").select("*").eq("user_id", data.user.id).order("created_at", { ascending: true });
+  const familyId = activeFamilyId ?? null;
+   const byFamily = familyId
+    ? await supabase.from("children").select("*").eq("family_id", familyId).order("created_at", { ascending: true })
+    : { data: [] as Array<Record<string, unknown>> };
    const allRows = [
     ...(((byFamily.data ?? []) as Array<Record<string, unknown>>)),
-    ...(((byUser.data ?? []) as Array<Record<string, unknown>>)),
    ];
 
    const dedupe = new Map<string, ChildSummary>();

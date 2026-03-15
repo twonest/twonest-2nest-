@@ -305,11 +305,9 @@ export default function ChildrenPage() {
   return { rows: [] as ChildRow[], error: result.error.message };
  };
 
- const refreshChildren = async (userId: string, familyId: string) => {
+ const refreshChildren = async (_userId: string, familyId: string) => {
   const familyRows = await queryChildrenByColumn("family_id", familyId);
-  const userRows = await queryChildrenByColumn("user_id", userId);
-
-  const rows = [...familyRows.rows, ...userRows.rows];
+  const rows = [...familyRows.rows];
   const unique = new Map<string, ChildProfile>();
 
   for (const row of rows) {
@@ -349,7 +347,7 @@ export default function ChildrenPage() {
   return mapped;
  };
 
- const refreshChildDocuments = async (child: ChildProfile, userId: string, familyId: string) => {
+ const refreshChildDocuments = async (child: ChildProfile, _userId: string, familyId: string) => {
   const supabase = getSupabaseBrowserClient();
 
   const fetchByChildId = await supabase.from("documents").select("*").eq("child_id", child.id).order("created_at", { ascending: false });
@@ -360,14 +358,12 @@ export default function ChildrenPage() {
   const fullName = `${child.firstName} ${child.lastName}`.trim();
   const fetchByName = await supabase.from("documents").select("*").ilike("enfant", `%${fullName || child.firstName}%`).order("created_at", { ascending: false });
 
-  const userFallback = await supabase.from("documents").select("*").eq("user_id", userId).order("created_at", { ascending: false });
   const familyFallback = await supabase.from("documents").select("*").eq("family_id", familyId).order("created_at", { ascending: false });
 
   const rows = [
    ...((fetchByChildId.data as Record<string, unknown>[] | null) ?? []),
    ...((fetchByEnfantId.data as Record<string, unknown>[] | null) ?? []),
    ...((fetchByName.data as Record<string, unknown>[] | null) ?? []),
-   ...((userFallback.data as Record<string, unknown>[] | null) ?? []),
    ...((familyFallback.data as Record<string, unknown>[] | null) ?? []),
   ];
 
@@ -445,8 +441,15 @@ export default function ChildrenPage() {
    const lastName = (profileByUser.data?.last_name ?? profileByUser.data?.nom ?? profileById?.data?.last_name ?? profileById?.data?.nom ?? "") as string;
    setDefaultFamilyName(lastName.trim());
 
-  const familyId = activeFamilyId ?? currentUser.id;
+  const familyId = activeFamilyId ?? null;
    setCurrentFamilyId(familyId);
+
+   if (!familyId) {
+    setFormError("Aucun espace actif sélectionné.");
+    setChildren([]);
+    setIsLoading(false);
+    return;
+   }
 
    try {
     const loadedChildren = await refreshChildren(currentUser.id, familyId);

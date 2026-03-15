@@ -12,6 +12,7 @@ export type EventRow = {
   start_at?: string;
   end_at?: string;
   user_id?: string;
+  family_id?: string;
   parent?: string;
 };
 
@@ -58,13 +59,21 @@ function isMissingFamilyIdColumnError(message: string): boolean {
   return isMissingColumn && normalized.includes("family_id");
 }
 
-export async function fetchEvents(client: SupabaseClient, userId?: string): Promise<EventRow[]> {
-  let query = client.from("events").select("*");
-  if (userId) {
-    query = query.eq("user_id", userId);
+function familyColumnMigrationMessage(tableName: string): string {
+  return `Le schéma Supabase de '${tableName}' est incomplet (colonne family_id manquante). Exécutez le script supabase/children_schema_run.sql puis rechargez la page.`;
+}
+
+export async function fetchEvents(client: SupabaseClient, familyId: string): Promise<EventRow[]> {
+  const { data, error } = await client
+    .from("events")
+    .select("*")
+    .eq("family_id", familyId)
+    .order("start_at", { ascending: true });
+
+  if (error && isMissingFamilyIdColumnError(error.message)) {
+    throw new Error(familyColumnMigrationMessage("events"));
   }
 
-  const { data, error } = await query.order("start_at", { ascending: true });
   throwIfError(error);
   return (data as EventRow[]) ?? [];
 }
@@ -75,12 +84,18 @@ export async function createEvent(
     title: string;
     type: EventType;
     user_id: string;
+    family_id: string;
     parent: ParentRole;
     start_at: string;
     end_at: string;
   },
 ): Promise<string | null> {
   const { data, error } = await client.from("events").insert(payload).select("id").maybeSingle();
+
+  if (error && isMissingFamilyIdColumnError(error.message)) {
+    throw new Error(familyColumnMigrationMessage("events"));
+  }
+
   throwIfError(error);
   return data?.id ? String(data.id) : null;
 }
@@ -143,8 +158,17 @@ export async function updateSwapRequestDecision(
   throwIfError(error);
 }
 
-export async function fetchSpecialDays(client: SupabaseClient): Promise<SpecialDayRow[]> {
-  const { data, error } = await client.from("jours_speciaux").select("*").order("date", { ascending: true });
+export async function fetchSpecialDays(client: SupabaseClient, familyId: string): Promise<SpecialDayRow[]> {
+  const { data, error } = await client
+    .from("jours_speciaux")
+    .select("*")
+    .eq("family_id", familyId)
+    .order("date", { ascending: true });
+
+  if (error && isMissingFamilyIdColumnError(error.message)) {
+    throw new Error(familyColumnMigrationMessage("jours_speciaux"));
+  }
+
   throwIfError(error);
   return (data as SpecialDayRow[]) ?? [];
 }

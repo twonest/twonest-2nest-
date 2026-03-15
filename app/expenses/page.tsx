@@ -552,29 +552,17 @@ export default function ExpensesPage() {
   }
  };
 
- const refreshExpenses = async (client = getSupabaseBrowserClient(), familyId = currentFamilyId, currentUserId = user?.id ?? null) => {
-  if (!familyId && !currentUserId) {
+ const refreshExpenses = async (client = getSupabaseBrowserClient(), familyId = currentFamilyId) => {
+  if (!familyId) {
+   setExpenses([]);
    return;
   }
 
   const byFamily = familyId
    ? await client.from("expenses").select("*").eq("family_id", familyId).order("expense_date", { ascending: false })
    : { data: null, error: null };
-  const byUser = currentUserId
-   ? await client.from("expenses").select("*").eq("user_id", currentUserId).order("expense_date", { ascending: false })
-   : { data: null, error: null };
-
-  let data = [
-   ...((byFamily.data as SupabaseExpenseRow[] | null) ?? []),
-   ...((byUser.data as SupabaseExpenseRow[] | null) ?? []),
-  ];
-  let error = byFamily.error && byUser.error ? byFamily.error : null;
-
-  if (data.length === 0) {
-   const fallback = await client.from("expenses").select("*").order("created_at", { ascending: false });
-   data = (fallback.data as SupabaseExpenseRow[] | null) ?? [];
-   error = fallback.error;
-  }
+  const data = ((byFamily.data as SupabaseExpenseRow[] | null) ?? []);
+  const error = byFamily.error;
 
   if (error) {
    setListError(error.message);
@@ -797,7 +785,7 @@ export default function ExpensesPage() {
     .maybeSingle();
 
    setCurrentParentRole(normalizeParentRole(profileData?.role));
-  setCurrentFamilyId(activeFamilyId ?? userData.user.id);
+  setCurrentFamilyId(activeFamilyId ?? null);
 
    const { data: profilesData } = await supabase.from("profiles").select("*");
    if (Array.isArray(profilesData)) {
@@ -823,7 +811,12 @@ export default function ExpensesPage() {
 
    setCheckingSession(false);
    await refreshShareRules(supabase);
-  await refreshExpenses(supabase, activeFamilyId ?? userData.user.id, userData.user.id);
+  if (!activeFamilyId) {
+   setListError("Aucun espace actif sélectionné.");
+   setExpenses([]);
+  } else {
+   await refreshExpenses(supabase, activeFamilyId);
+  }
    await refreshExpenseReviews(supabase);
    setIsLoadingExpenses(false);
   };

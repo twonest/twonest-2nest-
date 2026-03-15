@@ -35,6 +35,8 @@ type FamilyContextValue = {
 const FamilyContext = createContext<FamilyContextValue | null>(null);
 
 const PUBLIC_ROUTES = new Set(["/", "/login", "/signup"]);
+const GLOBAL_CHILD_FILTER_KEY = "twonest.selectedChildId";
+const GLOBAL_CHILD_FILTER_NAME_KEY = "twonest.selectedChildName";
 
 function emptyPermissions(): FamilyPermissionSet {
  return getDefaultFamilyPermissions("parent");
@@ -158,6 +160,10 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
  const setActiveFamily = (familyId: string) => {
   setActiveFamilyId(familyId);
   setStoredActiveFamilyId(familyId);
+  if (typeof window !== "undefined") {
+   window.localStorage.setItem(GLOBAL_CHILD_FILTER_KEY, "all");
+   window.localStorage.setItem(GLOBAL_CHILD_FILTER_NAME_KEY, "");
+  }
  };
 
  const currentMembership = useMemo(

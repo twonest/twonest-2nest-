@@ -194,11 +194,11 @@ export default function DocumentsPage() {
   const selectedName = window.localStorage.getItem(SHARED_CHILD_NAME_KEY) ?? "";
   setSelectedChildFilterId(selectedId);
   setSelectedChildFilterName(selectedName.trim());
- }, []);
+ }, [activeFamilyId]);
 
- const refreshDocuments = async (userId: string, familyId: string, source: "startup" | "after-insert" | "manual" = "manual") => {
+ const refreshDocuments = async (_userId: string, familyId: string, source: "startup" | "after-insert" | "manual" = "manual") => {
   const supabase = getSupabaseBrowserClient();
-  console.log("[documents] Filtres de chargement:", { user_id: userId, family_id: familyId, source });
+  console.log("[documents] Filtres de chargement:", { family_id: familyId, source });
 
   const queryByColumn = async (column: string, value: string) => {
    const result = await supabase
@@ -220,7 +220,6 @@ export default function DocumentsPage() {
   };
 
   const familyColumns = ["family_id"];
-  const userColumns = ["uploader_user_id", "uploaded_by", "user_id"];
 
   const familyRows: SupabaseDocumentRow[] = [];
   let familyError: string | null = null;
@@ -236,28 +235,13 @@ export default function DocumentsPage() {
    }
   }
 
-  const userRows: SupabaseDocumentRow[] = [];
-  let userError: string | null = null;
-  for (const column of userColumns) {
-   const result = await queryByColumn(column, userId);
-   if (result.error) {
-    userError = result.error;
-    continue;
-   }
-   userRows.push(...result.rows);
-   if (result.rows.length > 0) {
-    break;
-   }
-  }
-
-  if (familyRows.length === 0 && userRows.length === 0 && familyError && userError) {
-   throw new Error(userError || familyError);
+  if (familyRows.length === 0 && familyError) {
+   throw new Error(familyError);
   }
 
   const rowMap = new Map<string, SupabaseDocumentRow>();
   const allRows = [
-   ...familyRows,
-   ...userRows,
+  ...familyRows,
   ];
 
   for (const row of allRows) {
@@ -282,7 +266,7 @@ export default function DocumentsPage() {
 
     const uploaderUserId = row.uploader_user_id ?? row.uploaded_by ?? row.user_id ?? null;
     const uploaderRoleRaw = row.uploader_role ?? row.parent ?? null;
-    const inferredRole = uploaderUserId === userId ? currentRole : currentRole === "parent1" ? "parent2" : "parent1";
+    const inferredRole = currentRole;
 
     return {
      id,
@@ -345,11 +329,18 @@ export default function DocumentsPage() {
    const normalizedRole = normalizeParentRole(roleRaw);
    setCurrentRole(normalizedRole);
 
-   const familyId = activeFamilyId ?? currentUser.id;
+  const familyId = activeFamilyId ?? null;
    setCurrentFamilyId(familyId);
 
+  if (!familyId) {
+   setDocuments([]);
+   setFormError("Aucun espace actif sélectionné.");
+   setIsLoadingDocuments(false);
+   return;
+  }
+
    try {
-    await refreshDocuments(currentUser.id, familyId, "startup");
+   await refreshDocuments(currentUser.id, familyId, "startup");
    } catch (error) {
     setFormError(error instanceof Error ? error.message : "Impossible de charger les documents.");
    } finally {

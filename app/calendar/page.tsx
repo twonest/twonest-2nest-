@@ -468,11 +468,16 @@ export default function CalendarPage() {
   const selectedName = window.localStorage.getItem(SHARED_CHILD_NAME_KEY) ?? "";
   setSelectedChildFilterId(selectedId);
   setSelectedChildFilterName(selectedName.trim());
- }, []);
+ }, [activeFamilyId]);
 
- const refreshEvents = async (client = getSupabaseBrowserClient(), userId?: string) => {
+ const refreshEvents = async (client = getSupabaseBrowserClient(), familyId?: string | null) => {
+  if (!familyId) {
+   setEvents([]);
+   return;
+  }
+
   try {
-   const rows = await fetchEvents(client, userId);
+   const rows = await fetchEvents(client, familyId);
 
    setFormError("");
 
@@ -547,9 +552,14 @@ export default function CalendarPage() {
   setJournalEntries(mapped);
  };
 
- const refreshSpecialDays = async (client = getSupabaseBrowserClient()) => {
+ const refreshSpecialDays = async (client = getSupabaseBrowserClient(), familyId?: string | null) => {
+  if (!familyId) {
+   setSpecialDays([]);
+   return;
+  }
+
   try {
-   const rows = await fetchSpecialDays(client);
+   const rows = await fetchSpecialDays(client, familyId);
 
    const mapped = (rows as SpecialDayRow[])
    .map((row): SpecialDay | null => {
@@ -696,14 +706,21 @@ export default function CalendarPage() {
 
    const profileRoleRaw = await fetchProfileRole(supabase, userData.user.id);
    setProfileRole(normalizeParentRole(profileRoleRaw));
-  const familyId = activeFamilyId ?? userData.user.id;
+  const familyId = activeFamilyId ?? null;
    setCurrentFamilyId(familyId);
 
+   if (!familyId) {
+    setFormError("Aucun espace actif sélectionné.");
+    setIsLoadingEvents(false);
+    setIsLoadingSwapRequests(false);
+    return;
+   }
+
    await Promise.all([
-    refreshEvents(supabase, userData.user.id),
+    refreshEvents(supabase, familyId),
     refreshSwapRequests(supabase),
     refreshJournalEntries(supabase),
-    refreshSpecialDays(supabase),
+    refreshSpecialDays(supabase, familyId),
    ]);
    setIsLoadingEvents(false);
    setIsLoadingSwapRequests(false);
@@ -906,8 +923,14 @@ export default function CalendarPage() {
     user_id: user.id,
    };
 
-   const createdEventId = await createEvent(supabase, {
+  if (!currentFamilyId) {
+   setFormError("Aucun espace actif sélectionné.");
+   return;
+  }
+
+  const createdEventId = await createEvent(supabase, {
     ...basePayload,
+   family_id: currentFamilyId,
     parent: profileRole,
     start_at: startDate.toISOString(),
     end_at: endDate.toISOString(),
@@ -918,7 +941,7 @@ export default function CalendarPage() {
     await refreshJournalEntries(supabase);
    }
 
-   await refreshEvents(supabase, user.id);
+  await refreshEvents(supabase, currentFamilyId);
    setTitle("");
    setEventType("Garde");
    setStartAt(formatForDateTimeLocal(new Date()));
@@ -977,7 +1000,7 @@ export default function CalendarPage() {
    await syncJournalForEvent(editingEventId, editEventType, startDate, endDate, profileRole, editTitle.trim(), supabase);
    await refreshJournalEntries(supabase);
 
-   await refreshEvents(supabase, user?.id);
+  await refreshEvents(supabase, currentFamilyId);
    closeEditForm();
    setToast({ message: "Événement modifié avec succès.", variant: "success" });
   } catch (error) {
@@ -1009,7 +1032,7 @@ export default function CalendarPage() {
    }
    await refreshJournalEntries(supabase);
 
-   await refreshEvents(supabase, user?.id);
+  await refreshEvents(supabase, currentFamilyId);
    closeEditForm();
    setToast({ message: "Événement supprimé.", variant: "success" });
   } catch (error) {
@@ -1736,7 +1759,7 @@ export default function CalendarPage() {
     }
    }
 
-   await refreshEvents(supabase, user.id);
+  await refreshEvents(supabase, currentFamilyId);
    await refreshJournalEntries(supabase);
    closeScheduleForm();
    setToast({ message: "Horaire appliqué sur les 12 prochains mois.", variant: "success" });
