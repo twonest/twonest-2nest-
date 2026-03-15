@@ -164,17 +164,17 @@ function ShellContent({ children }: { children: React.ReactNode }) {
    <button
     type="button"
     onClick={() => setSelectorOpen((current) => !current)}
-    className="flex w-full items-center justify-between rounded-xl border border-[#A89080] bg-transparent px-3 py-3 text-left text-sm font-medium text-[#EDE8E3]"
+    className="flex w-full items-center justify-between rounded-xl border border-[#A89080] bg-transparent px-3 py-3 text-left text-sm font-medium text-[#FDFBF8]"
    >
     <div className="min-w-0">
-      <p className="truncate font-medium text-[#EDE8E3]">{activeFamily?.name ?? "Choisir un espace"}</p>
+     <p className="truncate font-medium text-[#FDFBF8]">{activeFamily?.name ?? "Choisir un espace"}</p>
      {currentMembership && (
-    <p className="truncate text-xs text-[#EDE8E3]">
+    <p className="truncate text-xs text-[#FDFBF8]">
      {familyRoleLabel(currentMembership.role)} · {familyTypeLabel(activeFamily?.type ?? "family")}
     </p>
      )}
     </div>
-    <ChevronDown size={16} className={`text-[#EDE8E3] transition ${selectorOpen ? "rotate-180" : ""}`} />
+    <ChevronDown size={16} className={`text-[#FDFBF8] transition ${selectorOpen ? "rotate-180" : ""}`} />
    </button>
 
    {selectorOpen && (
@@ -191,12 +191,12 @@ function ShellContent({ children }: { children: React.ReactNode }) {
       router.refresh();
        }}
        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
-      isActive ? "bg-[#7C6B5D] text-[#EDE8E3]" : "text-[#EDE8E3] hover:bg-[#3D3028]"
+      isActive ? "bg-[#7C6B5D] text-[#FFFFFF]" : "text-[#FDFBF8] hover:bg-[#3D3028]"
        }`}
       >
        <div className="min-w-0">
-      <p className="truncate font-medium text-[#EDE8E3]">{membership.family.name}</p>
-      <p className="truncate text-xs text-[#EDE8E3]">{familyRoleLabel(membership.role)}</p>
+      <p className="truncate font-medium text-[#FDFBF8]">{membership.family.name}</p>
+      <p className="truncate text-xs text-[#FDFBF8]">{familyRoleLabel(membership.role)}</p>
        </div>
        {isActive ? <span className="text-xs font-semibold">✓</span> : null}
       </button>
@@ -208,7 +208,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
 
      <Link
     href="/spaces/new"
-    className="block rounded-lg px-3 py-2 text-sm font-medium text-[#EDE8E3] transition hover:bg-[#3D3028]"
+    className="block rounded-lg px-3 py-2 text-sm font-medium text-[#FDFBF8] transition hover:bg-[#3D3028]"
      >
     + Créer un nouvel espace
      </Link>
