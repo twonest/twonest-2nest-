@@ -7,11 +7,9 @@ import { ArrowLeft, Settings, UserPlus, X } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import {
  CHILD_PERMISSION_OPTIONS,
- FAMILY_ROLE_OPTIONS,
  FAMILY_TYPE_OPTIONS,
  familyRoleLabel,
  familyTypeLabel,
- getAllowedChildPermissionDefaults,
  getDefaultFamilyPermissions,
  normalizeChildPermissions,
  normalizeFamilyPermissions,
@@ -44,6 +42,13 @@ type ChildPermissionRow = {
  permissions: Partial<Record<ChildPermissionKey, boolean>>;
 };
 
+const INVITE_ROLE_OPTIONS: Array<{ value: FamilyRole; label: string }> = [
+ { value: "parent", label: "Co-parent" },
+ { value: "step_parent", label: "Beau-parent" },
+ { value: "grand_parent", label: "Grand-parent" },
+ { value: "mediator", label: "Médiateur" },
+];
+
 export default function SpacesPage() {
  const router = useRouter();
  const { user, memberships, activeFamilyId, refreshFamilies, setActiveFamily, currentMembership } = useFamily();
@@ -51,10 +56,9 @@ export default function SpacesPage() {
  const [membersByFamily, setMembersByFamily] = useState<Record<string, MemberRow[]>>({});
  const [childrenByFamily, setChildrenByFamily] = useState<Record<string, ChildRow[]>>({});
  const [childPermissionsByUser, setChildPermissionsByUser] = useState<Record<string, Record<string, Partial<Record<ChildPermissionKey, boolean>>>>>(() => ({}));
+ const [inviteModalOpen, setInviteModalOpen] = useState(false);
  const [inviteEmail, setInviteEmail] = useState("");
  const [inviteRole, setInviteRole] = useState<FamilyRole>("parent");
- const [inviteFamilyPermissions, setInviteFamilyPermissions] = useState(getDefaultFamilyPermissions("parent"));
- const [inviteChildPermissions, setInviteChildPermissions] = useState<Record<string, Partial<Record<ChildPermissionKey, boolean>>>>({});
  const [renameName, setRenameName] = useState("");
  const [renameType, setRenameType] = useState<FamilyType>("family");
  const [savingState, setSavingState] = useState<string | null>(null);
@@ -84,10 +88,6 @@ export default function SpacesPage() {
   setRenameName(selectedMembership.family.name);
   setRenameType(selectedMembership.family.type);
  }, [selectedMembership]);
-
- useEffect(() => {
-  setInviteFamilyPermissions(getDefaultFamilyPermissions(inviteRole));
- }, [inviteRole]);
 
  useEffect(() => {
   if (!user || memberships.length === 0) {
@@ -182,8 +182,7 @@ export default function SpacesPage() {
  const resetInviteState = () => {
   setInviteEmail("");
   setInviteRole("parent");
-  setInviteFamilyPermissions(getDefaultFamilyPermissions("parent"));
-  setInviteChildPermissions({});
+  setInviteModalOpen(false);
  };
 
  const onInviteMember = async (event: FormEvent<HTMLFormElement>) => {
@@ -205,42 +204,58 @@ export default function SpacesPage() {
   try {
    const supabase = getSupabaseBrowserClient();
    const normalizedEmail = inviteEmail.trim().toLowerCase();
-   const { data: existingProfile } = await supabase.from("profiles").select("user_id, email").ilike("email", normalizedEmail).maybeSingle();
+     const { data: invitationRow, error: invitationError } = await supabase
+      .from("invitations")
+      .insert({
+       email_invite: normalizedEmail,
+       family_id: selectedFamilyId,
+       role: inviteRole,
+       statut: "en_attente",
+       created_by: user.id,
+      })
+      .select("token")
+      .maybeSingle();
 
-   const { data: memberRow, error: memberError } = await supabase
-    .from("family_members")
-    .insert({
-     family_id: selectedFamilyId,
-     user_id: typeof existingProfile?.user_id === "string" ? existingProfile.user_id : null,
-     invite_email: normalizedEmail,
-     role: inviteRole,
-     permissions: inviteFamilyPermissions,
-     status: typeof existingProfile?.user_id === "string" ? "active" : "pending",
-     invited_by: user.id,
-    })
-    .select("id, user_id")
-    .maybeSingle();
+     if (invitationError || !invitationRow?.token) {
+      throw new Error(invitationError?.message ?? "Impossible de créer l’invitation.");
+     }
 
-   if (memberError) {
-    throw new Error(memberError.message);
-   }
+     await supabase.from("family_members").upsert(
+      {
+       family_id: selectedFamilyId,
+       user_id: null,
+       invite_email: normalizedEmail,
+       role: inviteRole,
+       permissions: getDefaultFamilyPermissions(inviteRole),
+       status: "pending",
+       invited_by: user.id,
+      },
+      { onConflict: "family_id,invite_email" },
+     );
 
-   const targetUserId = typeof memberRow?.user_id === "string" ? memberRow.user_id : null;
-   if (inviteRole === "step_parent" && targetUserId) {
-    for (const child of selectedFamilyChildren) {
-     const permissions = inviteChildPermissions[child.id] ?? getAllowedChildPermissionDefaults();
-     await supabase.from("child_permissions").upsert({
-      child_id: child.id,
-      user_id: targetUserId,
-      accorde_par: user.id,
-      permissions,
-     }, { onConflict: "child_id,user_id" });
-    }
-   }
+     const redirectBase = typeof window !== "undefined" ? window.location.origin : "";
+     const activationUrl = `${redirectBase}/invite/accept?invitation_token=${encodeURIComponent(String(invitationRow.token))}&invitation_email=${encodeURIComponent(normalizedEmail)}`;
+
+     const otp = await supabase.auth.signInWithOtp({
+      email: normalizedEmail,
+      options: {
+       emailRedirectTo: activationUrl,
+       shouldCreateUser: true,
+       data: {
+        invitation_token: String(invitationRow.token),
+        family_id: selectedFamilyId,
+        role: inviteRole,
+       },
+      },
+     });
+
+     if (otp.error) {
+      throw new Error(otp.error.message);
+     }
 
    await refreshFamilies();
    resetInviteState();
-   setSuccessMessage("Invitation enregistrée pour cet espace.");
+     setSuccessMessage(`✅ Invitation envoyée à ${normalizedEmail} !`);
   } catch (error) {
    setErrorMessage(error instanceof Error ? error.message : "Erreur pendant l’invitation.");
   } finally {
@@ -477,90 +492,22 @@ export default function SpacesPage() {
            </button>
           </form>
 
-          <form className="space-y-4 rounded-2xl border border-[#E7D9CB] bg-[#FFFCF9] p-4" onSubmit={onInviteMember}>
-           <div className="flex items-center gap-2">
-            <UserPlus size={16} className="text-[#7C6B5D]" />
-            <h3 className="text-base font-semibold text-[#2C2420]">Inviter un membre</h3>
-           </div>
-
-           <input
-            type="email"
-            value={inviteEmail}
-            onChange={(event) => setInviteEmail(event.target.value)}
-            placeholder="nom@exemple.com"
-            className="w-full rounded-xl border border-[#D9D0C8] bg-white px-4 py-3 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-           />
-
-           <select
-            value={inviteRole}
-            onChange={(event) => setInviteRole(event.target.value as FamilyRole)}
-            className="w-full rounded-xl border border-[#D9D0C8] bg-white px-4 py-3 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-           >
-            {FAMILY_ROLE_OPTIONS.map((option) => (
-             <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-           </select>
-
-           {inviteRole === "step_parent" && (
-            <div className="space-y-4 rounded-2xl border border-[#E7D9CB] bg-white p-4">
-             <div>
-              <p className="text-sm font-semibold text-[#2C2420]">Accès famille du beau-parent</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-               {Object.entries(inviteFamilyPermissions).map(([key, enabled]) => (
-                <label key={key} className="flex items-center gap-2 rounded-lg border border-[#E7D9CB] px-3 py-2 text-sm text-[#6B5D55]">
-                 <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={(event) => setInviteFamilyPermissions((current) => ({ ...current, [key]: event.target.checked }))}
-                 />
-                 <span>{key}</span>
-                </label>
-               ))}
-              </div>
-             </div>
-
-             <div>
-              <p className="text-sm font-semibold text-[#2C2420]">Permissions par enfant</p>
-              <div className="mt-3 space-y-3">
-               {selectedFamilyChildren.map((child) => {
-                const childPermissions = inviteChildPermissions[child.id] ?? getAllowedChildPermissionDefaults();
-                return (
-                 <div key={child.id} className="rounded-xl border border-[#E7D9CB] p-3">
-                  <p className="font-medium text-[#2C2420]">{child.displayName}</p>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                   {CHILD_PERMISSION_OPTIONS.map((option) => (
-                    <label key={option.value} className="flex items-center gap-2 text-sm text-[#6B5D55]">
-                     <input
-                      type="checkbox"
-                      checked={Boolean(childPermissions[option.value])}
-                      onChange={(event) => setInviteChildPermissions((current) => ({
-                       ...current,
-                       [child.id]: {
-                        ...(current[child.id] ?? getAllowedChildPermissionDefaults()),
-                        [option.value]: event.target.checked,
-                       },
-                      }))}
-                     />
-                     <span>{option.label}</span>
-                    </label>
-                   ))}
-                  </div>
-                 </div>
-                );
-               })}
-              </div>
-             </div>
+          <div className="space-y-4 rounded-2xl border border-[#E7D9CB] bg-[#FFFCF9] p-4">
+           <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+             <UserPlus size={16} className="text-[#7C6B5D]" />
+             <h3 className="text-base font-semibold text-[#2C2420]">Invitations</h3>
             </div>
-           )}
-
-           <button
-            type="submit"
-            disabled={savingState === "invite"}
-            className="rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:opacity-70"
-           >
-            {savingState === "invite" ? "Envoi..." : "Inviter ce membre"}
-           </button>
-          </form>
+            <button
+             type="button"
+             onClick={() => setInviteModalOpen(true)}
+             className="rounded-xl bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-105"
+            >
+             Inviter mon co-parent
+            </button>
+           </div>
+           <p className="text-sm text-[#6B5D55]">Envoyez une invitation interne par email avec un lien d’activation sécurisé.</p>
+          </div>
 
           <div className="space-y-4 rounded-2xl border border-[#E7D9CB] bg-[#FFFCF9] p-4">
            <h3 className="text-base font-semibold text-[#2C2420]">Membres et permissions</h3>
@@ -647,6 +594,57 @@ export default function SpacesPage() {
       )}
      </div>
     </section>
+
+    {inviteModalOpen && canManageSelectedSpace && (
+     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#2C2420]/45 px-4">
+      <div className="w-full max-w-md rounded-2xl border border-[#D9D0C8] bg-white p-5 shadow-[0_24px_80px_rgba(44,36,32,0.25)]">
+       <div className="flex items-center justify-between gap-3">
+      <h3 className="text-lg font-semibold text-[#2C2420]">Inviter mon co-parent</h3>
+      <button
+       type="button"
+       onClick={resetInviteState}
+       className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#E7D9CB] text-[#7C6B5D]"
+      >
+       <X size={14} />
+      </button>
+       </div>
+
+       <form className="mt-4 space-y-4" onSubmit={onInviteMember}>
+      <div>
+       <label className="mb-1 block text-sm font-semibold text-[#6B5D55]">Adresse courriel du co-parent</label>
+       <input
+        type="email"
+        value={inviteEmail}
+        onChange={(event) => setInviteEmail(event.target.value)}
+        placeholder="nom@exemple.com"
+        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-4 py-3 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
+       />
+      </div>
+
+      <div>
+       <label className="mb-1 block text-sm font-semibold text-[#6B5D55]">Rôle</label>
+       <select
+        value={inviteRole}
+        onChange={(event) => setInviteRole(event.target.value as FamilyRole)}
+        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-4 py-3 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
+       >
+        {INVITE_ROLE_OPTIONS.map((option) => (
+         <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+       </select>
+      </div>
+
+      <button
+       type="submit"
+       disabled={savingState === "invite"}
+       className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-105 disabled:opacity-70"
+      >
+       {savingState === "invite" ? "Envoi..." : "Envoyer l'invitation"}
+      </button>
+       </form>
+      </div>
+     </div>
+    )}
    </main>
   </div>
  );

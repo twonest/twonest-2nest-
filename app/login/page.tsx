@@ -4,6 +4,9 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { acceptInvitationToken, setStoredActiveFamilyId } from "@/lib/family";
+
+const JOINED_FAMILY_NAME_KEY = "twonest.joinedFamilyName";
 
 export default function LoginPage() {
  const router = useRouter();
@@ -12,16 +15,37 @@ export default function LoginPage() {
  const [isLoading, setIsLoading] = useState(false);
  const [errorMessage, setErrorMessage] = useState("");
  const [configError, setConfigError] = useState("");
+ const [invitationToken, setInvitationToken] = useState("");
 
  const canSubmit = useMemo(() => email.trim().length > 0 && password.length > 0, [email, password]);
 
  useEffect(() => {
+  if (typeof window !== "undefined") {
+   const params = new URLSearchParams(window.location.search);
+   const inviteToken = (params.get("invitation_token") ?? "").trim();
+   const inviteEmail = (params.get("invitation_email") ?? "").trim();
+   if (inviteToken) {
+    setInvitationToken(inviteToken);
+   }
+   if (inviteEmail) {
+    setEmail(inviteEmail);
+   }
+  }
+
   try {
    const supabase = getSupabaseBrowserClient();
 
-   supabase.auth.getSession().then(({ data }) => {
+   supabase.auth.getSession().then(async ({ data }) => {
     if (!data.session?.user) {
      return;
+    }
+
+    if (invitationToken) {
+     const accepted = await acceptInvitationToken(data.session.user, invitationToken);
+     if (accepted) {
+      setStoredActiveFamilyId(accepted.familyId);
+      window.localStorage.setItem(JOINED_FAMILY_NAME_KEY, accepted.familyName);
+     }
     }
 
     router.replace("/dashboard");
@@ -33,7 +57,7 @@ export default function LoginPage() {
      : "Configuration Supabase manquante. Redemarre le serveur Next.js.",
    );
   }
- }, [router]);
+ }, [invitationToken, router]);
 
  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
@@ -75,6 +99,14 @@ export default function LoginPage() {
    setErrorMessage("Session introuvable après connexion.");
    return;
   }
+
+   if (invitationToken) {
+    const accepted = await acceptInvitationToken(data.user, invitationToken);
+    if (accepted) {
+     setStoredActiveFamilyId(accepted.familyId);
+     window.localStorage.setItem(JOINED_FAMILY_NAME_KEY, accepted.familyName);
+    }
+   }
 
     console.log("[Login] Redirection post-auth", { destination: "/dashboard" });
   router.replace("/dashboard");

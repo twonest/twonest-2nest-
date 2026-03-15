@@ -4,7 +4,9 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
-import { resolvePostAuthDestination } from "@/lib/family";
+import { acceptInvitationToken, resolvePostAuthDestination, setStoredActiveFamilyId } from "@/lib/family";
+
+const JOINED_FAMILY_NAME_KEY = "twonest.joinedFamilyName";
 
 export default function SignupPage() {
  const router = useRouter();
@@ -14,21 +16,44 @@ export default function SignupPage() {
  const [errorMessage, setErrorMessage] = useState("");
  const [successMessage, setSuccessMessage] = useState("");
  const [configError, setConfigError] = useState("");
+ const [invitationToken, setInvitationToken] = useState("");
 
  const canSubmit = useMemo(() => email.trim().length > 0 && password.length > 0, [email, password]);
 
  useEffect(() => {
+  if (typeof window !== "undefined") {
+   const params = new URLSearchParams(window.location.search);
+   const inviteToken = (params.get("invitation_token") ?? "").trim();
+   const inviteEmail = (params.get("invitation_email") ?? "").trim();
+   if (inviteToken) {
+    setInvitationToken(inviteToken);
+   }
+   if (inviteEmail) {
+    setEmail(inviteEmail);
+   }
+  }
+
   try {
    const supabase = getSupabaseBrowserClient();
 
-   supabase.auth.getSession().then(({ data }) => {
+   supabase.auth.getSession().then(async ({ data }) => {
     if (!data.session?.user) {
      return;
     }
 
+    if (invitationToken) {
+     const accepted = await acceptInvitationToken(data.session.user, invitationToken);
+     if (accepted) {
+      setStoredActiveFamilyId(accepted.familyId);
+      window.localStorage.setItem(JOINED_FAMILY_NAME_KEY, accepted.familyName);
+      router.replace("/dashboard");
+      return;
+     }
+    }
+
     void resolvePostAuthDestination(data.session.user).then((destination) => {
-     router.replace(destination);
-    });
+      router.replace(destination);
+     });
    });
   } catch (error) {
    setConfigError(
@@ -37,7 +62,7 @@ export default function SignupPage() {
      : "Configuration Supabase manquante. Redemarre le serveur Next.js.",
    );
   }
- }, [router]);
+ }, [invitationToken, router]);
 
  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
@@ -65,6 +90,16 @@ export default function SignupPage() {
    }
 
   if (data.user && data.session) {
+   if (invitationToken) {
+    const accepted = await acceptInvitationToken(data.user, invitationToken);
+    if (accepted) {
+     setStoredActiveFamilyId(accepted.familyId);
+     window.localStorage.setItem(JOINED_FAMILY_NAME_KEY, accepted.familyName);
+     router.replace("/dashboard");
+     return;
+    }
+   }
+
    const destination = await resolvePostAuthDestination(data.user);
    router.replace(destination);
    return;

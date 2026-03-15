@@ -521,3 +521,65 @@ export async function resolvePostAuthDestination(user: User): Promise<string> {
  }
  return "/dashboard";
 }
+
+export type AcceptedInvitation = {
+ familyId: string;
+ familyName: string;
+};
+
+export async function acceptInvitationToken(user: User, token: string): Promise<AcceptedInvitation | null> {
+ const normalizedToken = token.trim();
+ if (!normalizedToken) {
+  return null;
+ }
+
+ const supabase = getSupabaseBrowserClient();
+ const { data: invitation, error: invitationError } = await supabase
+  .from("invitations")
+  .select("id, email_invite, family_id, role, statut, created_by")
+  .eq("token", normalizedToken)
+  .maybeSingle();
+
+ if (invitationError || !invitation || typeof invitation.family_id !== "string") {
+  return null;
+ }
+
+ const inviteEmail = typeof invitation.email_invite === "string" ? invitation.email_invite.trim().toLowerCase() : "";
+ const userEmail = user.email?.trim().toLowerCase() ?? "";
+ if (inviteEmail && userEmail && inviteEmail !== userEmail) {
+  throw new Error("Cette invitation est liée à une autre adresse courriel.");
+ }
+
+ const role = normalizeFamilyRole(invitation.role);
+
+ await supabase
+  .from("family_members")
+  .upsert(
+   {
+    family_id: invitation.family_id,
+    user_id: user.id,
+    invite_email: user.email?.trim().toLowerCase() ?? inviteEmail,
+    role,
+    permissions: getDefaultFamilyPermissions(role),
+    status: "active",
+    invited_by: typeof invitation.created_by === "string" ? invitation.created_by : null,
+   },
+   { onConflict: "family_id,user_id" },
+  );
+
+ await supabase
+  .from("invitations")
+  .update({ statut: "acceptee" })
+  .eq("id", invitation.id);
+
+ const { data: family } = await supabase
+  .from("families")
+  .select("id, name")
+  .eq("id", invitation.family_id)
+  .maybeSingle();
+
+ return {
+  familyId: invitation.family_id,
+  familyName: typeof family?.name === "string" && family.name.trim().length > 0 ? family.name.trim() : "votre espace",
+ };
+}

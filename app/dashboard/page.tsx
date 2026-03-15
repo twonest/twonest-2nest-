@@ -23,6 +23,7 @@ type ChildSummary = {
 
 const GLOBAL_CHILD_FILTER_KEY = "twonest.selectedChildId";
 const GLOBAL_CHILD_FILTER_NAME_KEY = "twonest.selectedChildName";
+const JOINED_FAMILY_NAME_KEY = "twonest.joinedFamilyName";
 
 const ACTIONS: DashboardAction[] = [
  { label: "Calendrier", href: "/calendar", icon: CalendarIcon, feature: "calendar" },
@@ -60,6 +61,19 @@ export default function DashboardPage() {
  const [configError, setConfigError] = useState("");
  const [children, setChildren] = useState<ChildSummary[]>([]);
  const [selectedChildFilter, setSelectedChildFilter] = useState("all");
+ const [joinedFamilyMessage, setJoinedFamilyMessage] = useState("");
+
+ useEffect(() => {
+  if (typeof window === "undefined") {
+   return;
+  }
+
+  const joinedFamilyName = window.localStorage.getItem(JOINED_FAMILY_NAME_KEY);
+  if (joinedFamilyName && joinedFamilyName.trim().length > 0) {
+   setJoinedFamilyMessage(`Vous avez rejoint l'espace ${joinedFamilyName.trim()} !`);
+   window.localStorage.removeItem(JOINED_FAMILY_NAME_KEY);
+  }
+ }, []);
 
  useEffect(() => {
   let supabase;
@@ -201,6 +215,12 @@ export default function DashboardPage() {
     </header>
 
     <section className="grid gap-4 sm:grid-cols-2">
+       {joinedFamilyMessage && (
+        <p className="sm:col-span-2 rounded-xl border border-[#D9D0C8] bg-[#F3F8F1] px-4 py-3 text-sm text-[#57745F]">
+         {joinedFamilyMessage}
+        </p>
+       )}
+
      <div className="sm:col-span-2 rounded-2xl border border-[#D9D0C8] bg-[#F5F0EB] p-4">
       <label htmlFor="global-child-filter" className="mb-2 block text-sm font-semibold text-[#6B5D55]">
        Voir pour :
