@@ -164,7 +164,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
    <button
     type="button"
     onClick={() => setSelectorOpen((current) => !current)}
-    className="flex w-full items-center justify-between rounded-xl border border-[#A89080] bg-transparent px-3 py-3 text-left text-sm font-medium text-[#F5F0EB]"
+    className="flex w-full items-center justify-between rounded-xl border border-[#A89080] bg-transparent px-3 py-3 text-left text-sm font-medium text-[#EDE8E3]"
    >
     <div className="min-w-0">
      <p className="truncate font-medium">{activeFamily?.name ?? "Choisir un espace"}</p>
@@ -191,7 +191,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
       router.refresh();
        }}
        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
-      isActive ? "bg-[#7C6B5D] text-[#FFFFFF]" : "text-[#F5F0EB] hover:bg-[#3D3028]"
+      isActive ? "bg-[#7C6B5D] text-[#FFFFFF]" : "text-[#EDE8E3] hover:bg-[#3D3028]"
        }`}
       >
        <div className="min-w-0">
@@ -208,7 +208,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
 
      <Link
     href="/spaces/new"
-     className="block rounded-lg px-3 py-2 text-sm font-medium text-[#A89080] transition hover:bg-[#3D3028]"
+    className="block rounded-lg px-3 py-2 text-sm font-medium text-[#EDE8E3] transition hover:bg-[#3D3028]"
      >
     + Créer un nouvel espace
      </Link>
