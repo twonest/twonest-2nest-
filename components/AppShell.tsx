@@ -155,9 +155,9 @@ function ShellContent({ children }: { children: React.ReactNode }) {
 
  return (
   <div className="min-h-screen bg-[#F5F0EB] text-[#2C2420]">
-   <aside className="fixed inset-y-0 left-0 z-40 flex w-[240px] flex-col border-r border-[#7C6B5D] bg-[#2C2420] px-4 py-5">
+   <aside className="fixed inset-y-0 left-0 z-40 flex w-[240px] flex-col border-r border-[#7C6B5D] bg-[#2C2420] px-4 py-5" style={{ color: "#FFFFFF" }}>
     <div className="px-2">
-       <p className="text-2xl font-bold tracking-tight text-[#FFFFFF]">2nest</p>
+      <p className="text-2xl font-bold tracking-tight text-[#FFFFFF]" style={{ color: "#FFFFFF" }}>2nest</p>
     </div>
 
   <div className="relative mt-5 px-2">
@@ -167,9 +167,9 @@ function ShellContent({ children }: { children: React.ReactNode }) {
     className="flex w-full items-center justify-between rounded-xl border border-[#A89080] bg-transparent px-3 py-3 text-left text-sm font-medium text-[#FFFFFF]"
    >
     <div className="min-w-0">
-     <p className="truncate font-medium text-[#FFFFFF]">{activeFamily?.name ?? "Choisir un espace"}</p>
+   <p className="truncate font-medium text-[#FFFFFF]" style={{ color: "#FFFFFF" }}>{activeFamily?.name ?? "Choisir un espace"}</p>
      {currentMembership && (
-    <p className="truncate text-xs text-[#FFFFFF]">
+   <p className="truncate text-xs text-[#FFFFFF]" style={{ color: "#FFFFFF" }}>
      {familyRoleLabel(currentMembership.role)} · {familyTypeLabel(activeFamily?.type ?? "family")}
     </p>
      )}
@@ -195,8 +195,8 @@ function ShellContent({ children }: { children: React.ReactNode }) {
        }`}
       >
        <div className="min-w-0">
-      <p className="truncate font-medium text-[#FFFFFF]">{membership.family.name}</p>
-      <p className="truncate text-xs text-[#FFFFFF]">{familyRoleLabel(membership.role)}</p>
+      <p className="truncate font-medium text-[#FFFFFF]" style={{ color: "#FFFFFF" }}>{membership.family.name}</p>
+      <p className="truncate text-xs text-[#FFFFFF]" style={{ color: "#FFFFFF" }}>{familyRoleLabel(membership.role)}</p>
        </div>
        {isActive ? <span className="text-xs font-semibold text-[#FFFFFF]">✓</span> : null}
       </button>
@@ -208,7 +208,8 @@ function ShellContent({ children }: { children: React.ReactNode }) {
 
      <Link
     href="/spaces/new"
-    className="block rounded-lg px-3 py-2 text-sm font-medium text-[#FFFFFF] transition hover:bg-[#3D3028]"
+   className="block rounded-lg px-3 py-2 text-sm font-medium text-[#FFFFFF] transition hover:bg-[#3D3028]"
+   style={{ color: "#FFFFFF" }}
      >
     + Créer un nouvel espace
      </Link>
@@ -250,9 +251,9 @@ function ShellContent({ children }: { children: React.ReactNode }) {
        )}
       </div>
       <div className="min-w-0">
-       <p className="truncate text-sm font-semibold text-[#FFFFFF]">{firstName}</p>
+          <p className="truncate text-sm font-semibold text-[#FFFFFF]" style={{ color: "#FFFFFF" }}>{firstName}</p>
         {activeFamily && (
-         <p className="truncate text-xs text-[#FFFFFF]">{activeFamily.name}</p>
+             <p className="truncate text-xs text-[#FFFFFF]" style={{ color: "#FFFFFF" }}>{activeFamily.name}</p>
         )}
        <button
         type="button"
