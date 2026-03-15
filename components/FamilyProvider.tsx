@@ -35,7 +35,6 @@ type FamilyContextValue = {
 const FamilyContext = createContext<FamilyContextValue | null>(null);
 
 const PUBLIC_ROUTES = new Set(["/", "/login", "/signup"]);
-const FAMILY_SETUP_PREFIX = "/spaces";
 
 function emptyPermissions(): FamilyPermissionSet {
  return getDefaultFamilyPermissions("parent");
@@ -74,17 +73,14 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
    setStoredActiveFamilyId(nextActiveFamilyId);
 
    const isPublicRoute = PUBLIC_ROUTES.has(pathname);
-   const isFamilySetupRoute = pathname.startsWith(FAMILY_SETUP_PREFIX);
-
-   if (!isPublicRoute && !isFamilySetupRoute && nextMemberships.length === 0) {
-    router.replace("/spaces/new?first=1");
-    return;
-   }
 
    if (isPublicRoute && data.user) {
-    router.replace(nextMemberships.length === 0 ? "/spaces/new?first=1" : "/dashboard");
+    router.replace("/dashboard");
    }
   } catch (error) {
+     setMemberships([]);
+     setActiveFamilyId(null);
+     setStoredActiveFamilyId(null);
    setConfigError(
     error instanceof Error
      ? error.message

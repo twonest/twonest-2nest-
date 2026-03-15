@@ -4,7 +4,6 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
-import { resolvePostAuthDestination } from "@/lib/family";
 
 export default function LoginPage() {
  const router = useRouter();
@@ -25,9 +24,7 @@ export default function LoginPage() {
      return;
     }
 
-    void resolvePostAuthDestination(data.session.user).then((destination) => {
-     router.replace(destination);
-    });
+    router.replace("/dashboard");
    });
   } catch (error) {
    setConfigError(
@@ -79,9 +76,8 @@ export default function LoginPage() {
    return;
   }
 
-  const destination = await resolvePostAuthDestination(data.user);
-    console.log("[Login] Redirection post-auth", { destination });
-  router.replace(destination);
+    console.log("[Login] Redirection post-auth", { destination: "/dashboard" });
+  router.replace("/dashboard");
   } catch (error) {
     console.error("[Login] Exception inattendue", error);
    setErrorMessage(
