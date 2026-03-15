@@ -167,7 +167,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
     className="flex w-full items-center justify-between rounded-xl border border-[#A89080] bg-transparent px-3 py-3 text-left text-sm font-medium text-[#EDE8E3]"
    >
     <div className="min-w-0">
-     <p className="truncate font-medium">{activeFamily?.name ?? "Choisir un espace"}</p>
+      <p className="truncate font-medium text-[#EDE8E3]">{activeFamily?.name ?? "Choisir un espace"}</p>
      {currentMembership && (
     <p className="truncate text-xs text-[#EDE8E3]">
      {familyRoleLabel(currentMembership.role)} · {familyTypeLabel(activeFamily?.type ?? "family")}
@@ -195,7 +195,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
        }`}
       >
        <div className="min-w-0">
-      <p className="truncate font-medium">{membership.family.name}</p>
+      <p className="truncate font-medium text-[#EDE8E3]">{membership.family.name}</p>
       <p className="truncate text-xs text-[#EDE8E3]">{familyRoleLabel(membership.role)}</p>
        </div>
        {isActive ? <span className="text-xs font-semibold">✓</span> : null}
