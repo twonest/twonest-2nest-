@@ -61,6 +61,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
  const [firstName, setFirstName] = useState("Parent");
  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
  const [selectorOpen, setSelectorOpen] = useState(false);
+ const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
 
  const currentRoute = useMemo(() => {
   return SHELL_ROUTES.find((route) => pathname.startsWith(route.href)) ?? null;
@@ -129,6 +130,78 @@ function ShellContent({ children }: { children: React.ReactNode }) {
  useEffect(() => {
   setSelectorOpen(false);
  }, [pathname, activeFamilyId]);
+
+ useEffect(() => {
+  let unsubscribed = false;
+  let cleanupRealtime: (() => void) | null = null;
+
+  const setupUnreadBadge = async () => {
+   if (!activeFamilyId || !isShellRoute(pathname)) {
+    setUnreadMessagesCount(0);
+    return;
+   }
+
+   try {
+    const supabase = getSupabaseBrowserClient();
+    const { data } = await supabase.auth.getUser();
+    const user = data.user;
+
+    if (!user) {
+      setUnreadMessagesCount(0);
+      return;
+    }
+
+    const refreshUnread = async () => {
+      const countQuery = await supabase
+       .from("messages")
+       .select("id", { count: "exact", head: true })
+       .eq("family_id", activeFamilyId)
+       .neq("sender_id", user.id)
+       .is("read_at", null);
+
+      if (countQuery.error) {
+       setUnreadMessagesCount(0);
+       return;
+      }
+
+      if (!unsubscribed) {
+       setUnreadMessagesCount(countQuery.count ?? 0);
+      }
+    };
+
+    await refreshUnread();
+
+    const channel = supabase
+     .channel(`sidebar-unread-${activeFamilyId}-${user.id}`)
+     .on(
+      "postgres_changes",
+      {
+       event: "*",
+       schema: "public",
+       table: "messages",
+       filter: `family_id=eq.${activeFamilyId}`,
+      },
+      async () => {
+       await refreshUnread();
+      },
+     )
+     .subscribe();
+
+    cleanupRealtime = () => {
+      channel.unsubscribe();
+    };
+   } catch {
+    setUnreadMessagesCount(0);
+   }
+  };
+
+  void setupUnreadBadge();
+
+  return () => {
+   unsubscribed = true;
+   cleanupRealtime?.();
+  };
+ }, [activeFamilyId, pathname]);
 
  const onSignOut = async () => {
   try {
@@ -232,7 +305,14 @@ function ShellContent({ children }: { children: React.ReactNode }) {
         }`}
        >
         <Icon size={18} />
-        <span>{route.label}</span>
+        <span className="flex items-center gap-2">
+         <span>{route.label}</span>
+         {route.href === "/messages" && unreadMessagesCount > 0 && !pathname.startsWith("/messages") && (
+          <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C93C3C] px-1.5 text-[10px] font-semibold text-white">
+           {unreadMessagesCount > 99 ? "99+" : unreadMessagesCount}
+          </span>
+         )}
+        </span>
        </Link>
       );
      })}
