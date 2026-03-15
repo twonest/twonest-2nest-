@@ -174,7 +174,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
     </p>
      )}
     </div>
-    <ChevronDown size={16} className={`text-[#A89080] transition ${selectorOpen ? "rotate-180" : ""}`} />
+    <ChevronDown size={16} className={`text-[#EDE8E3] transition ${selectorOpen ? "rotate-180" : ""}`} />
    </button>
 
    {selectorOpen && (
