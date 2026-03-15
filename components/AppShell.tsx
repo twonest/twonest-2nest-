@@ -164,21 +164,21 @@ function ShellContent({ children }: { children: React.ReactNode }) {
    <button
     type="button"
     onClick={() => setSelectorOpen((current) => !current)}
-    className="flex w-full items-center justify-between rounded-xl border border-[#7C6B5D] bg-[#3A312B] px-3 py-3 text-left text-sm text-[#EDE8E3]"
+    className="flex w-full items-center justify-between rounded-xl border border-[#A89080] bg-transparent px-3 py-3 text-left text-sm font-medium text-[#F5F0EB]"
    >
     <div className="min-w-0">
-     <p className="truncate font-semibold">{activeFamily?.name ?? "Choisir un espace"}</p>
+     <p className="truncate font-medium">{activeFamily?.name ?? "Choisir un espace"}</p>
      {currentMembership && (
-    <p className="truncate text-xs text-[#CDBFB2]">
+    <p className="truncate text-xs text-[#A89080]">
      {familyRoleLabel(currentMembership.role)} · {familyTypeLabel(activeFamily?.type ?? "family")}
     </p>
      )}
     </div>
-    <ChevronDown size={16} className={`transition ${selectorOpen ? "rotate-180" : ""}`} />
+    <ChevronDown size={16} className={`text-[#A89080] transition ${selectorOpen ? "rotate-180" : ""}`} />
    </button>
 
    {selectorOpen && (
-    <div className="absolute inset-x-2 top-[calc(100%+8px)] z-50 rounded-xl border border-[#7C6B5D] bg-[#F8F2EC] p-2 shadow-[0_20px_40px_rgba(0,0,0,0.25)]">
+    <div className="absolute inset-x-2 top-[calc(100%+8px)] z-50 rounded-xl border border-[#A89080] bg-[#2C2420] p-2 shadow-[0_20px_40px_rgba(0,0,0,0.25)]">
      <div className="space-y-1">
     {memberships.map((membership) => {
      const isActive = membership.familyId === activeFamilyId;
@@ -190,13 +190,13 @@ function ShellContent({ children }: { children: React.ReactNode }) {
       setActiveFamily(membership.familyId);
       router.refresh();
        }}
-       className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${
-      isActive ? "bg-[#E7D8C8] text-[#2C2420]" : "text-[#4A3E37] hover:bg-[#EFE5DC]"
+       className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+      isActive ? "bg-[#7C6B5D] text-[#FFFFFF]" : "text-[#F5F0EB] hover:bg-[#3D3028]"
        }`}
       >
        <div className="min-w-0">
       <p className="truncate font-medium">{membership.family.name}</p>
-      <p className="truncate text-xs text-[#7C6B5D]">{familyRoleLabel(membership.role)}</p>
+      <p className={`truncate text-xs ${isActive ? "text-[#FFFFFF]" : "text-[#F5F0EB]"}`}>{familyRoleLabel(membership.role)}</p>
        </div>
        {isActive ? <span className="text-xs font-semibold">✓</span> : null}
       </button>
@@ -204,11 +204,11 @@ function ShellContent({ children }: { children: React.ReactNode }) {
     })}
      </div>
 
-     <div className="my-2 border-t border-[#D8C8B8]" />
+      <div className="my-2 border-t border-[#A89080]" />
 
      <Link
     href="/spaces/new"
-    className="block rounded-lg px-3 py-2 text-sm font-medium text-[#7C6B5D] transition hover:bg-[#EFE5DC]"
+     className="block rounded-lg px-3 py-2 text-sm font-medium text-[#A89080] transition hover:bg-[#3D3028]"
      >
     + Créer un nouvel espace
      </Link>
