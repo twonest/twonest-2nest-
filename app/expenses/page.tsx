@@ -1,24 +1,23 @@
 "use client";
 
-import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
-import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, Clock, Download, Eye, PlusCircle, Settings, Trash2, XCircle } from "lucide-react";
-import jsPDF from "jspdf";
+import type { LucideIcon } from "lucide-react";
 import {
- Bar,
- BarChart,
- CartesianGrid,
- Cell,
- Legend,
- Pie,
- PieChart,
- ResponsiveContainer,
- Tooltip,
- XAxis,
- YAxis,
-} from "recharts";
+ Baby,
+ BookOpen,
+ ChevronLeft,
+ ChevronRight,
+ CircleDollarSign,
+ HeartPulse,
+ Plus,
+ ReceiptText,
+ Shirt,
+ Trash2,
+ UtensilsCrossed,
+ X,
+} from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import AccessDeniedCard from "@/components/AccessDeniedCard";
 import { useFamily } from "@/components/FamilyProvider";
@@ -26,8 +25,6 @@ import { getFeatureAccess } from "@/lib/family";
 
 type ExpenseCategory = "Médical" | "Scolaire" | "Vêtements" | "Activités" | "Nourriture" | "Autre";
 type PaidBy = "parent1" | "parent2";
-type ParentRole = "parent1" | "parent2";
-type ReviewStatus = "pending" | "approved" | "contested";
 
 type ExpenseItem = {
  id: string;
@@ -71,53 +68,6 @@ type SupabaseExpenseRow = {
  parent2_share_amount?: number | string;
  split_parent1?: number | string;
  split_parent2?: number | string;
- parent1_share_pct?: number | string;
- parent2_share_pct?: number | string;
-};
-
-type SupabasePartageRegleRow = {
- category?: string;
- categorie?: string;
- parent1_pct?: number | string;
- parent2_pct?: number | string;
- parent1_percentage?: number | string;
- parent2_percentage?: number | string;
-};
-
-type SupabaseExpenseReviewRow = {
- id?: string | number;
- expense_id?: string | number;
- depense_id?: string | number;
- requester_user_id?: string;
- user_id?: string;
- reviewer_role?: string;
- reviewer?: string;
- status?: string;
- review_status?: string;
- contest_reason?: string | null;
- reason?: string | null;
- contested_reason?: string | null;
- reviewed_at?: string | null;
- decided_at?: string | null;
- created_at?: string | null;
- reviewer_user_id?: string | null;
-};
-
-type ExpenseReview = {
- id: string;
- expenseId: string;
- requesterUserId: string | null;
- reviewerRole: ParentRole;
- status: ReviewStatus;
- contestReason: string | null;
- reviewedAt: string | null;
- createdAt: string | null;
- reviewerUserId: string | null;
-};
-
-type ToastState = {
- message: string;
- variant: "success" | "error";
 };
 
 type ParentNames = {
@@ -125,29 +75,58 @@ type ParentNames = {
  parent2: string;
 };
 
-type ExpensesTab = "expenses" | "annual";
+type ToastState = {
+ message: string;
+ variant: "success" | "error";
+};
+
+type ExpensesTab = "expenses" | "statistics";
+type DateGroupKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
+
+type CategoryMeta = {
+ icon: LucideIcon;
+ iconBg: string;
+ iconFg: string;
+};
 
 const CATEGORIES: ExpenseCategory[] = ["Médical", "Scolaire", "Vêtements", "Activités", "Nourriture", "Autre"];
-const SHARED_MONTH_KEY = "twonest.selectedMonth";
 const SHARED_CHILD_KEY = "twonest.selectedChildId";
 const SHARED_CHILD_NAME_KEY = "twonest.selectedChildName";
-const MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Aoû", "Sep", "Oct", "Nov", "Déc"];
-const DEFAULT_SHARE_RULES: Record<ExpenseCategory, number> = {
- Médical: 50,
- Scolaire: 50,
- Vêtements: 50,
- Activités: 50,
- Nourriture: 50,
- Autre: 50,
+
+const CATEGORY_META: Record<ExpenseCategory, CategoryMeta> = {
+ Médical: {
+  icon: HeartPulse,
+  iconBg: "bg-[#EFE7DF]",
+  iconFg: "text-[#8C6A54]",
+ },
+ Scolaire: {
+  icon: BookOpen,
+  iconBg: "bg-[#ECE8E1]",
+  iconFg: "text-[#76695F]",
+ },
+ Vêtements: {
+  icon: Shirt,
+  iconBg: "bg-[#F2ECE6]",
+  iconFg: "text-[#8A6D5A]",
+ },
+ Activités: {
+  icon: Baby,
+  iconBg: "bg-[#EBE5DE]",
+  iconFg: "text-[#7B6B5E]",
+ },
+ Nourriture: {
+  icon: UtensilsCrossed,
+  iconBg: "bg-[#F3ECE2]",
+  iconFg: "text-[#896C55]",
+ },
+ Autre: {
+  icon: CircleDollarSign,
+  iconBg: "bg-[#EFE9E2]",
+  iconFg: "text-[#7A6A5E]",
+ },
 };
-const CATEGORY_COLORS: Record<ExpenseCategory, string> = {
- Médical: "#7C6B5D",
- Scolaire: "#7AA8D2",
- Vêtements: "#8A7FD1",
- Activités: "#6B8F71",
- Nourriture: "#F3B562",
- Autre: "#A7B8C9",
-};
+
+const MONTH_LABELS = ["Jan", "Fev", "Mar", "Avr", "Mai", "Juin", "Juil", "Aout", "Sep", "Oct", "Nov", "Dec"];
 
 function parseAmount(value: number | string | undefined): number | null {
  if (typeof value === "number") {
@@ -183,14 +162,6 @@ function normalizePaidBy(value: string | undefined): PaidBy {
  return normalized === "parent2" ? "parent2" : "parent1";
 }
 
-function normalizeParentRole(value: string | undefined): ParentRole {
- return normalizePaidBy(value);
-}
-
-function getOppositeParentRole(role: ParentRole): ParentRole {
- return role === "parent1" ? "parent2" : "parent1";
-}
-
 function normalizeCategory(value: string | undefined): ExpenseCategory {
  if (!value) {
   return "Autre";
@@ -207,77 +178,6 @@ function formatCurrency(amount: number): string {
  });
 }
 
-function formatTooltipCurrencyValue(value: unknown): string {
- if (typeof value === "number") {
-  return `${formatCurrency(value)}$`;
- }
-
- if (typeof value === "string") {
-  const parsed = Number(value.replace(",", "."));
-  return `${formatCurrency(Number.isFinite(parsed) ? parsed : 0)}$`;
- }
-
- return `${formatCurrency(0)}$`;
-}
-
-function toMonthValue(dateInput: string): string {
- const date = new Date(dateInput);
- if (Number.isNaN(date.getTime())) {
-  return "";
- }
-
- const month = `${date.getMonth() + 1}`.padStart(2, "0");
- return `${date.getFullYear()}-${month}`;
-}
-
-function shiftMonth(monthValue: string, delta: number): string {
- const [rawYear, rawMonth] = monthValue.split("-");
- const year = Number(rawYear);
- const month = Number(rawMonth);
-
- if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-  return toMonthValue(new Date().toISOString());
- }
-
- const date = new Date(year, month - 1 + delta, 1);
- const nextMonth = `${date.getMonth() + 1}`.padStart(2, "0");
- return `${date.getFullYear()}-${nextMonth}`;
-}
-
-function formatMonthLabel(monthValue: string): string {
- const [rawYear, rawMonth] = monthValue.split("-");
- const year = Number(rawYear);
- const month = Number(rawMonth);
-
- if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-  return monthValue;
- }
-
- const label = new Date(year, month - 1, 1).toLocaleDateString("fr-CA", {
-  month: "long",
-  year: "numeric",
- });
-
- return label.charAt(0).toUpperCase() + label.slice(1);
-}
-
-function getReceiptType(url: string | null): "image" | "pdf" | "other" {
- if (!url) {
-  return "other";
- }
-
- const cleanUrl = url.split("?")[0].toLowerCase();
- if (cleanUrl.endsWith(".pdf")) {
-  return "pdf";
- }
-
- if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg") || cleanUrl.endsWith(".png") || cleanUrl.endsWith(".webp")) {
-  return "image";
- }
-
- return "other";
-}
-
 function toDateOnlyValue(dateInput: string): string | null {
  const parsedDate = new Date(dateInput);
  if (Number.isNaN(parsedDate.getTime())) {
@@ -287,22 +187,6 @@ function toDateOnlyValue(dateInput: string): string | null {
  const month = `${parsedDate.getMonth() + 1}`.padStart(2, "0");
  const day = `${parsedDate.getDate()}`.padStart(2, "0");
  return `${parsedDate.getFullYear()}-${month}-${day}`;
-}
-
-function clampPercentage(value: number): number {
- if (!Number.isFinite(value)) {
-  return 50;
- }
-
- if (value < 0) {
-  return 0;
- }
-
- if (value > 100) {
-  return 100;
- }
-
- return Math.round(value * 100) / 100;
 }
 
 function getExpenseYear(dateInput: string): number | null {
@@ -341,34 +225,77 @@ function extractProfileDisplayName(profile: Record<string, unknown>): string | n
   return lastName;
  }
 
- const candidateKeys = ["full_name", "display_name", "name", "nom", "prenom_nom"];
+ return null;
+}
 
- for (const key of candidateKeys) {
-  const value = profile[key];
-  if (typeof value === "string" && value.trim().length > 0) {
-   return value.trim();
-  }
+function getDateGroupKey(dateInput: string): DateGroupKey {
+ const date = new Date(dateInput);
+ if (Number.isNaN(date.getTime())) {
+  return "older";
  }
 
- return null;
+ const today = new Date();
+ const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+ const targetStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+ const diffDays = Math.floor((todayStart.getTime() - targetStart.getTime()) / 86400000);
+
+ if (diffDays === 0) {
+  return "today";
+ }
+
+ if (diffDays === 1) {
+  return "yesterday";
+ }
+
+ const dayOfWeek = (todayStart.getDay() + 6) % 7;
+ const monday = new Date(todayStart);
+ monday.setDate(todayStart.getDate() - dayOfWeek);
+
+ if (targetStart >= monday) {
+  return "thisWeek";
+ }
+
+ if (targetStart.getMonth() === todayStart.getMonth() && targetStart.getFullYear() === todayStart.getFullYear()) {
+  return "thisMonth";
+ }
+
+ return "older";
+}
+
+function getDateGroupLabel(group: DateGroupKey): string {
+ if (group === "today") {
+  return "Aujourd'hui";
+ }
+
+ if (group === "yesterday") {
+  return "Hier";
+ }
+
+ if (group === "thisWeek") {
+  return "Cette semaine";
+ }
+
+ if (group === "thisMonth") {
+  return "Ce mois-ci";
+ }
+
+ return "Plus ancien";
 }
 
 export default function ExpensesPage() {
  const router = useRouter();
  const { activeFamilyId, currentRole: familyRole, currentPermissions } = useFamily();
+
  const [user, setUser] = useState<User | null>(null);
  const [checkingSession, setCheckingSession] = useState(true);
  const [configError, setConfigError] = useState("");
  const [currentFamilyId, setCurrentFamilyId] = useState<string | null>(null);
 
  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
- const [expenseReviews, setExpenseReviews] = useState<ExpenseReview[]>([]);
  const [isLoadingExpenses, setIsLoadingExpenses] = useState(true);
  const [isCreatingExpense, setIsCreatingExpense] = useState(false);
  const [isMarkingReimbursed, setIsMarkingReimbursed] = useState(false);
  const [deletingExpenseId, setDeletingExpenseId] = useState<string | null>(null);
- const [isSubmittingReview, setIsSubmittingReview] = useState(false);
- const [currentParentRole, setCurrentParentRole] = useState<ParentRole>("parent1");
 
  const [amount, setAmount] = useState("");
  const [description, setDescription] = useState("");
@@ -376,24 +303,20 @@ export default function ExpensesPage() {
  const [paidBy, setPaidBy] = useState<PaidBy>("parent1");
  const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().slice(0, 10));
  const [receiptFile, setReceiptFile] = useState<File | null>(null);
- const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
- const [receiptMimeType, setReceiptMimeType] = useState("");
 
- const [selectedMonth, setSelectedMonth] = useState(() => toMonthValue(new Date().toISOString()));
  const [activeTab, setActiveTab] = useState<ExpensesTab>("expenses");
- const [isAddExpenseFormOpen, setIsAddExpenseFormOpen] = useState(false);
- const [receiptViewerExpense, setReceiptViewerExpense] = useState<ExpenseItem | null>(null);
- const [contestingReview, setContestingReview] = useState<ExpenseReview | null>(null);
- const [contestReasonInput, setContestReasonInput] = useState("");
+ const [isAddExpenseModalOpen, setIsAddExpenseModalOpen] = useState(false);
  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
  const [parentNames, setParentNames] = useState<ParentNames>({ parent1: "Parent 1", parent2: "Parent 2" });
- const [shareRules, setShareRules] = useState<Record<ExpenseCategory, number>>(DEFAULT_SHARE_RULES);
- const [isShareSettingsOpen, setIsShareSettingsOpen] = useState(false);
- const [isSavingShareRules, setIsSavingShareRules] = useState(false);
 
  const [formError, setFormError] = useState("");
  const [listError, setListError] = useState("");
  const [toast, setToast] = useState<ToastState | null>(null);
+
+ const expensesAccess = familyRole
+  ? getFeatureAccess("expenses", familyRole, currentPermissions)
+  : { allowed: true, readOnly: false, reason: "" };
+ const isReadOnly = expensesAccess.readOnly;
 
  useEffect(() => {
   if (!toast) {
@@ -404,164 +327,14 @@ export default function ExpensesPage() {
   return () => clearTimeout(timeout);
  }, [toast]);
 
- useEffect(() => {
-  const storedMonth = window.localStorage.getItem(SHARED_MONTH_KEY);
-  if (storedMonth && /^\d{4}-\d{2}$/.test(storedMonth)) {
-   setSelectedMonth(storedMonth);
-  }
- }, []);
-
- useEffect(() => {
-  if (/^\d{4}-\d{2}$/.test(selectedMonth)) {
-   window.localStorage.setItem(SHARED_MONTH_KEY, selectedMonth);
-  }
- }, [selectedMonth]);
-
- useEffect(() => {
-  return () => {
-   if (receiptPreviewUrl) {
-    URL.revokeObjectURL(receiptPreviewUrl);
-   }
-  };
- }, [receiptPreviewUrl]);
-
- const onReceiptChange = (event: ChangeEvent<HTMLInputElement>) => {
-  const file = event.target.files?.[0] ?? null;
-
-  if (receiptPreviewUrl) {
-   URL.revokeObjectURL(receiptPreviewUrl);
-   setReceiptPreviewUrl(null);
-  }
-
-  if (!file) {
-   setReceiptFile(null);
-   setReceiptMimeType("");
-   return;
-  }
-
-  const allowedTypes = ["image/jpeg", "image/png", "application/pdf"];
-  if (!allowedTypes.includes(file.type)) {
-   setFormError("Format de reçu invalide. Utilise JPG, PNG ou PDF.");
-   setReceiptFile(null);
-   setReceiptMimeType("");
-   event.target.value = "";
-   return;
-  }
-
-  setFormError("");
-  setReceiptFile(file);
-  setReceiptMimeType(file.type);
-
-  if (file.type.startsWith("image/")) {
-   setReceiptPreviewUrl(URL.createObjectURL(file));
-  }
- };
-
- const openReceiptViewer = (expense: ExpenseItem) => {
-  setReceiptViewerExpense(expense);
- };
-
- const closeReceiptViewer = () => {
-  setReceiptViewerExpense(null);
- };
-
- const openContestModal = (review: ExpenseReview) => {
-  setContestingReview(review);
-  setContestReasonInput("");
- };
-
- const closeContestModal = () => {
-  setContestingReview(null);
-  setContestReasonInput("");
- };
-
- const onChangeParent1Share = (categoryName: ExpenseCategory, nextValue: string) => {
-  const numeric = clampPercentage(Number(nextValue.replace(",", ".")));
-  setShareRules((current) => ({
-   ...current,
-   [categoryName]: numeric,
-  }));
- };
-
- const refreshShareRules = async (client = getSupabaseBrowserClient()) => {
-  let { data, error } = await client.from("partage_regles").select("*");
-
-  if (error) {
-   setShareRules(DEFAULT_SHARE_RULES);
-   return;
-  }
-
-  const nextRules: Record<ExpenseCategory, number> = { ...DEFAULT_SHARE_RULES };
-
-  for (const row of (data ?? []) as SupabasePartageRegleRow[]) {
-   const rowCategory = normalizeCategory(row.category ?? row.categorie);
-   const parsedParent1 = parseAmount(row.parent1_pct ?? row.parent1_percentage);
-   if (parsedParent1 !== null) {
-    nextRules[rowCategory] = clampPercentage(parsedParent1);
-   }
-  }
-
-  setShareRules(nextRules);
- };
-
- const onSaveShareRules = async () => {
-  setIsSavingShareRules(true);
-  setListError("");
-
-  try {
-   const supabase = getSupabaseBrowserClient();
-
-   for (const categoryName of CATEGORIES) {
-    const parent1Pct = clampPercentage(shareRules[categoryName] ?? 50);
-    const parent2Pct = clampPercentage(100 - parent1Pct);
-
-    const { error } = await supabase.from("partage_regles").upsert(
-     {
-      category: categoryName,
-      parent1_pct: parent1Pct,
-      parent2_pct: parent2Pct,
-     },
-     { onConflict: "category" },
-    );
-
-    if (!error) {
-     continue;
-    }
-
-    const fallback = await supabase.from("partage_regles").upsert(
-     {
-      categorie: categoryName,
-      parent1_percentage: parent1Pct,
-      parent2_percentage: parent2Pct,
-     },
-     { onConflict: "categorie" },
-    );
-
-    if (fallback.error) {
-     setListError(fallback.error.message);
-     return;
-    }
-   }
-
-   setToast({ message: "Entente de partage sauvegardée.", variant: "success" });
-   await refreshShareRules();
-  } catch (error) {
-   setListError(error instanceof Error ? error.message : "Erreur pendant la sauvegarde des règles.");
-  } finally {
-   setIsSavingShareRules(false);
-  }
- };
-
  const refreshExpenses = async (client = getSupabaseBrowserClient(), familyId = currentFamilyId) => {
   if (!familyId) {
    setExpenses([]);
    return;
   }
 
-  const byFamily = familyId
-   ? await client.from("expenses").select("*").eq("family_id", familyId).order("expense_date", { ascending: false })
-   : { data: null, error: null };
-  const data = ((byFamily.data as SupabaseExpenseRow[] | null) ?? []);
+  const byFamily = await client.from("expenses").select("*").eq("family_id", familyId).order("expense_date", { ascending: false });
+  const data = (byFamily.data as SupabaseExpenseRow[] | null) ?? [];
   const error = byFamily.error;
 
   if (error) {
@@ -578,178 +351,54 @@ export default function ExpensesPage() {
   }
 
   const mappedEntries = Array.from(rowMap.values()).map((row): ExpenseItem | null => {
-    const parsedAmount = parseAmount(row.amount ?? row.montant);
-    const rawDate = row.expense_date ?? row.date ?? row.spent_at ?? row.created_at;
+   const parsedAmount = parseAmount(row.amount ?? row.montant);
+   const rawDate = row.expense_date ?? row.date ?? row.spent_at ?? row.created_at;
 
-    if (!row.id || parsedAmount === null || !rawDate) {
-     return null;
-    }
+   if (!row.id || parsedAmount === null || !rawDate) {
+    return null;
+   }
 
-    const statusText = (row.status ?? "").toLowerCase();
-    const reimbursed =
-     row.reimbursed === true ||
-     Boolean(row.reimbursed_at) ||
-     statusText === "remboursé" ||
-         statusText === "remboursée" ||
-     statusText === "reimbursed";
+   const statusText = (row.status ?? "").toLowerCase();
+   const reimbursed =
+    row.reimbursed === true ||
+    Boolean(row.reimbursed_at) ||
+    statusText === "remboursé" ||
+    statusText === "remboursée" ||
+    statusText === "reimbursed";
 
-    const normalizedReceiptUrl = row.recu_url ?? null;
+   const parent1ShareAmount = parseAmount(row.parent1_share_amount) ?? parseAmount(row.split_parent1);
+   const parent2ShareAmount = parseAmount(row.parent2_share_amount) ?? parseAmount(row.split_parent2);
 
-    const parent1ShareAmount = parseAmount(row.parent1_share_amount) ?? parseAmount(row.split_parent1);
-    const parent2ShareAmount = parseAmount(row.parent2_share_amount) ?? parseAmount(row.split_parent2);
-
-    return {
-     id: String(row.id),
-     amount: parsedAmount,
-     description: row.description ?? row.label ?? "Sans description",
-     category: normalizeCategory(row.category ?? row.categorie),
-     childId: row.child_id ?? row.enfant_id ?? null,
-     childName: row.child_name ?? row.enfant ?? null,
-     paidBy: normalizePaidBy(row.paid_by ?? row.payer ?? row.parent),
-     expenseDate: rawDate,
-     reimbursed,
-     receiptUrl: normalizedReceiptUrl,
-     parent1ShareAmount: parent1ShareAmount ?? roundToTwo(parsedAmount / 2),
-     parent2ShareAmount: parent2ShareAmount ?? roundToTwo(parsedAmount / 2),
-    };
-   });
+   return {
+    id: String(row.id),
+    amount: parsedAmount,
+    description: row.description ?? row.label ?? "Sans description",
+    category: normalizeCategory(row.category ?? row.categorie),
+    childId: row.child_id ?? row.enfant_id ?? null,
+    childName: row.child_name ?? row.enfant ?? null,
+    paidBy: normalizePaidBy(row.paid_by ?? row.payer ?? row.parent),
+    expenseDate: rawDate,
+    reimbursed,
+    receiptUrl: row.recu_url ?? null,
+    parent1ShareAmount: parent1ShareAmount ?? roundToTwo(parsedAmount / 2),
+    parent2ShareAmount: parent2ShareAmount ?? roundToTwo(parsedAmount / 2),
+   };
+  });
 
   const mapped = mappedEntries.filter((expense): expense is ExpenseItem => expense !== null);
-
   const selectedChildId = window.localStorage.getItem(SHARED_CHILD_KEY) ?? "all";
   const selectedChildName = (window.localStorage.getItem(SHARED_CHILD_NAME_KEY) ?? "").toLowerCase();
-  const filtered = selectedChildId === "all"
-   ? mapped
-   : mapped.filter((expense) => {
-    const byId = expense.childId === selectedChildId;
-    const byName = selectedChildName.length > 0 && (expense.childName ?? "").toLowerCase().includes(selectedChildName);
-    return byId || byName;
-   });
+
+  const filtered =
+   selectedChildId === "all"
+    ? mapped
+    : mapped.filter((expense) => {
+       const byId = expense.childId === selectedChildId;
+       const byName = selectedChildName.length > 0 && (expense.childName ?? "").toLowerCase().includes(selectedChildName);
+       return byId || byName;
+      });
 
   setExpenses(filtered);
- };
-
- const expensesAccess = familyRole
-  ? getFeatureAccess("expenses", familyRole, currentPermissions)
-  : { allowed: true, readOnly: false, reason: "" };
- const isReadOnly = expensesAccess.readOnly;
-
- const refreshExpenseReviews = async (client = getSupabaseBrowserClient()) => {
-  let { data, error } = await client.from("expense_reviews").select("*").order("created_at", { ascending: false });
-
-  if (error) {
-   const fallback = await client.from("expense_reviews").select("*");
-   data = fallback.data;
-   error = fallback.error;
-  }
-
-  if (error) {
-   return;
-  }
-
-  const mapped = (data as SupabaseExpenseReviewRow[])
-   .map((row): ExpenseReview | null => {
-    const expenseId = row.expense_id ?? row.depense_id;
-    if (!row.id || !expenseId) {
-     return null;
-    }
-
-    const rawStatus = (row.status ?? row.review_status ?? "pending").toLowerCase();
-    const status: ReviewStatus = rawStatus === "approved" || rawStatus === "contested" ? rawStatus : "pending";
-
-    return {
-     id: String(row.id),
-     expenseId: String(expenseId),
-     requesterUserId: row.requester_user_id ?? row.user_id ?? null,
-     reviewerRole: normalizeParentRole(row.reviewer_role ?? row.reviewer),
-     status,
-     contestReason: row.contest_reason ?? row.contested_reason ?? row.reason ?? null,
-     reviewedAt: row.reviewed_at ?? row.decided_at ?? null,
-     createdAt: row.created_at ?? null,
-     reviewerUserId: row.reviewer_user_id ?? null,
-    };
-   })
-   .filter((review): review is ExpenseReview => review !== null);
-
-  setExpenseReviews(mapped);
- };
-
- const onApproveExpense = async (review: ExpenseReview) => {
-  if (!user) {
-   return;
-  }
-
-  setIsSubmittingReview(true);
-  setListError("");
-
-  try {
-   const supabase = getSupabaseBrowserClient();
-   const reviewedAt = new Date().toISOString();
-
-   const { error } = await supabase
-    .from("expense_reviews")
-    .update({
-     status: "approved",
-     reviewed_at: reviewedAt,
-     reviewer_user_id: user.id,
-     contest_reason: null,
-    })
-    .eq("id", review.id);
-
-   if (error) {
-    setListError(error.message);
-    return;
-   }
-
-   await refreshExpenseReviews();
-   setToast({ message: "Dépense approuvée.", variant: "success" });
-  } catch (error) {
-   setListError(error instanceof Error ? error.message : "Erreur pendant l'approbation.");
-  } finally {
-   setIsSubmittingReview(false);
-  }
- };
-
- const onSubmitContestExpense = async () => {
-  if (!user || !contestingReview) {
-   return;
-  }
-
-  if (contestReasonInput.trim().length === 0) {
-   setListError("La raison de contestation est obligatoire.");
-   return;
-  }
-
-  setIsSubmittingReview(true);
-  setListError("");
-
-  try {
-   const supabase = getSupabaseBrowserClient();
-   const reviewedAt = new Date().toISOString();
-
-   const { error } = await supabase
-    .from("expense_reviews")
-    .update({
-     status: "contested",
-     reviewed_at: reviewedAt,
-     reviewer_user_id: user.id,
-     contest_reason: contestReasonInput.trim(),
-    })
-    .eq("id", contestingReview.id);
-
-   if (error) {
-    setListError(error.message);
-    return;
-   }
-
-   await refreshExpenseReviews();
-   closeContestModal();
-   setToast({ message: "Dépense contestée.", variant: "success" });
-  } catch (error) {
-   setListError(error instanceof Error ? error.message : "Erreur pendant la contestation.");
-  } finally {
-   setIsSubmittingReview(false);
-  }
  };
 
  useEffect(() => {
@@ -777,15 +426,7 @@ export default function ExpensesPage() {
    }
 
    setUser(userData.user);
-
-   const { data: profileData } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("user_id", userData.user.id)
-    .maybeSingle();
-
-   setCurrentParentRole(normalizeParentRole(profileData?.role));
-  setCurrentFamilyId(activeFamilyId ?? null);
+   setCurrentFamilyId(activeFamilyId ?? null);
 
    const { data: profilesData } = await supabase.from("profiles").select("*");
    if (Array.isArray(profilesData)) {
@@ -793,8 +434,9 @@ export default function ExpensesPage() {
     let nextParent2 = "Parent 2";
 
     for (const rawProfile of profilesData as Record<string, unknown>[]) {
-     const role = normalizeParentRole(typeof rawProfile.role === "string" ? rawProfile.role : undefined);
+     const role = normalizePaidBy(typeof rawProfile.role === "string" ? rawProfile.role : undefined);
      const displayName = extractProfileDisplayName(rawProfile);
+
      if (!displayName) {
       continue;
      }
@@ -810,14 +452,14 @@ export default function ExpensesPage() {
    }
 
    setCheckingSession(false);
-   await refreshShareRules(supabase);
-  if (!activeFamilyId) {
-   setListError("Aucun espace actif sélectionné.");
-   setExpenses([]);
-  } else {
-   await refreshExpenses(supabase, activeFamilyId);
-  }
-   await refreshExpenseReviews(supabase);
+
+   if (!activeFamilyId) {
+    setListError("Aucun espace actif sélectionné.");
+    setExpenses([]);
+   } else {
+    await refreshExpenses(supabase, activeFamilyId);
+   }
+
    setIsLoadingExpenses(false);
   };
 
@@ -836,6 +478,26 @@ export default function ExpensesPage() {
   };
  }, [activeFamilyId, router]);
 
+ const onReceiptChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const file = event.target.files?.[0] ?? null;
+
+  if (!file) {
+   setReceiptFile(null);
+   return;
+  }
+
+  const allowedTypes = ["image/jpeg", "image/png", "application/pdf"];
+  if (!allowedTypes.includes(file.type)) {
+   setFormError("Format de reçu invalide. Utilise JPG, PNG ou PDF.");
+   setReceiptFile(null);
+   event.target.value = "";
+   return;
+  }
+
+  setFormError("");
+  setReceiptFile(file);
+ };
+
  const onAddExpense = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
 
@@ -845,9 +507,7 @@ export default function ExpensesPage() {
   }
 
   const parsedAmount = Number(amount.replace(",", "."));
-  const parent1Pct = clampPercentage(shareRules[category] ?? 50);
-  const parent2Pct = clampPercentage(100 - parent1Pct);
-  const parent1ShareAmount = roundToTwo((parsedAmount * parent1Pct) / 100);
+  const parent1ShareAmount = roundToTwo(parsedAmount / 2);
   const parent2ShareAmount = roundToTwo(parsedAmount - parent1ShareAmount);
 
   if (!user || !Number.isFinite(parsedAmount) || parsedAmount <= 0 || description.trim().length === 0 || !expenseDate) {
@@ -885,7 +545,7 @@ export default function ExpensesPage() {
    const payloadVariants = [
     {
      user_id: user.id,
-       family_id: currentFamilyId,
+     family_id: currentFamilyId,
      amount: parsedAmount,
      description: description.trim(),
      category,
@@ -894,8 +554,6 @@ export default function ExpensesPage() {
      paid_by: paidBy,
      expense_date: expenseDate,
      recu_url: uploadedReceiptUrl,
-     parent1_share_pct: parent1Pct,
-     parent2_share_pct: parent2Pct,
      parent1_share_amount: parent1ShareAmount,
      parent2_share_amount: parent2ShareAmount,
      reimbursed: false,
@@ -903,7 +561,7 @@ export default function ExpensesPage() {
     },
     {
      owner_id: user.id,
-       family_id: currentFamilyId,
+     family_id: currentFamilyId,
      amount: parsedAmount,
      description: description.trim(),
      category,
@@ -912,8 +570,6 @@ export default function ExpensesPage() {
      paid_by: paidBy,
      expense_date: expenseDate,
      recu_url: uploadedReceiptUrl,
-     parent1_share_pct: parent1Pct,
-     parent2_share_pct: parent2Pct,
      parent1_share_amount: parent1ShareAmount,
      parent2_share_amount: parent2ShareAmount,
      reimbursed: false,
@@ -921,7 +577,7 @@ export default function ExpensesPage() {
     },
     {
      owner_id: user.id,
-       family_id: currentFamilyId,
+     family_id: currentFamilyId,
      montant: parsedAmount,
      label: description.trim(),
      categorie: category,
@@ -930,47 +586,22 @@ export default function ExpensesPage() {
      parent: paidBy,
      date: expenseDate,
      recu_url: uploadedReceiptUrl,
-     parent1_share_pct: parent1Pct,
-     parent2_share_pct: parent2Pct,
      parent1_share_amount: parent1ShareAmount,
      parent2_share_amount: parent2ShareAmount,
-         status: "En attente de remboursement",
-    },
-    {
-     owner_id: user.id,
-       family_id: currentFamilyId,
-     montant: parsedAmount,
-     label: description.trim(),
-     categorie: category,
-     enfant_id: window.localStorage.getItem(SHARED_CHILD_KEY) !== "all" ? window.localStorage.getItem(SHARED_CHILD_KEY) : null,
-     enfant: window.localStorage.getItem(SHARED_CHILD_NAME_KEY) || null,
-     parent: paidBy,
-     date: expenseDate,
-     parent1_share_pct: parent1Pct,
-     parent2_share_pct: parent2Pct,
-     parent1_share_amount: parent1ShareAmount,
-     parent2_share_amount: parent2ShareAmount,
-         status: "En attente de remboursement",
+     status: "En attente de remboursement",
     },
    ];
 
    let lastInsertError: string | null = null;
-   let createdExpenseId: string | null = null;
 
    for (const payload of payloadVariants) {
-    const { data: inserted, error } = await supabase
-     .from("expenses")
-     .insert(payload)
-     .select("id")
-     .maybeSingle();
+    const { error } = await supabase.from("expenses").insert(payload);
 
     if (!error) {
      lastInsertError = null;
-     if (inserted?.id) {
-      createdExpenseId = String(inserted.id);
-     }
      break;
     }
+
     lastInsertError = error.message;
    }
 
@@ -979,32 +610,14 @@ export default function ExpensesPage() {
     return;
    }
 
-   if (createdExpenseId) {
-    await supabase.from("expense_reviews").upsert(
-     {
-      expense_id: createdExpenseId,
-      requester_user_id: user.id,
-      reviewer_role: getOppositeParentRole(paidBy),
-      status: "pending",
-     },
-     { onConflict: "expense_id" },
-    );
-   }
-
-  await refreshExpenses();
-   await refreshExpenseReviews();
+   await refreshExpenses();
    setAmount("");
    setDescription("");
    setCategory("Médical");
    setPaidBy("parent1");
    setExpenseDate(new Date().toISOString().slice(0, 10));
    setReceiptFile(null);
-   setReceiptMimeType("");
-   if (receiptPreviewUrl) {
-    URL.revokeObjectURL(receiptPreviewUrl);
-   }
-   setReceiptPreviewUrl(null);
-   setIsAddExpenseFormOpen(false);
+   setIsAddExpenseModalOpen(false);
    setToast({ message: "Dépense ajoutée.", variant: "success" });
   } catch (error) {
    setFormError(error instanceof Error ? error.message : "Erreur pendant l'ajout de la dépense.");
@@ -1017,22 +630,21 @@ export default function ExpensesPage() {
   if (isReadOnly) {
    return;
   }
+
   setIsMarkingReimbursed(true);
   setListError("");
 
   try {
    const supabase = getSupabaseBrowserClient();
    const nowIso = new Date().toISOString();
+
    const { error } = await supabase
     .from("expenses")
     .update({ reimbursed: true, reimbursed_at: nowIso, status: "reimbursed" })
     .eq("id", expenseId);
 
    if (error) {
-    const fallback = await supabase
-     .from("expenses")
-         .update({ status: "Remboursée", reimbursed_at: nowIso })
-     .eq("id", expenseId);
+    const fallback = await supabase.from("expenses").update({ status: "Remboursée", reimbursed_at: nowIso }).eq("id", expenseId);
 
     if (fallback.error) {
      setListError(fallback.error.message);
@@ -1053,6 +665,7 @@ export default function ExpensesPage() {
   if (isReadOnly) {
    return;
   }
+
   const shouldDelete = window.confirm("Supprimer cette dépense ? Cette action est définitive.");
   if (!shouldDelete) {
    return;
@@ -1086,66 +699,15 @@ export default function ExpensesPage() {
   }
  };
 
- const filteredExpenses = useMemo(() => {
-  return expenses.filter((expense) => toMonthValue(expense.expenseDate) === selectedMonth);
- }, [expenses, selectedMonth]);
-
- const balance = useMemo(() => {
-  let net = 0;
-
-  for (const expense of filteredExpenses) {
-   if (expense.reimbursed) {
-    continue;
-   }
-
-   if (expense.paidBy === "parent1") {
-    const parent2Share = expense.parent2ShareAmount ?? expense.amount / 2;
-    net += parent2Share;
-   } else {
-    const parent1Share = expense.parent1ShareAmount ?? expense.amount / 2;
-    net -= parent1Share;
-   }
-  }
-
-  return net;
- }, [filteredExpenses]);
-
- const balanceText = useMemo(() => {
-  if (Math.abs(balance) < 0.005) {
-   return "Comptes équilibrés entre Parent 1 et Parent 2";
-  }
-
-  if (balance > 0) {
-   return `Parent 2 doit ${formatCurrency(balance)}$ à Parent 1`;
-  }
-
-  return `Parent 1 doit ${formatCurrency(Math.abs(balance))}$ à Parent 2`;
- }, [balance]);
-
- const reviewByExpenseId = useMemo(() => {
-  const map = new Map<string, ExpenseReview>();
-  for (const review of expenseReviews) {
-   if (!map.has(review.expenseId)) {
-    map.set(review.expenseId, review);
-   }
-  }
-  return map;
- }, [expenseReviews]);
-
- const pendingNotifications = useMemo(() => {
-  return expenseReviews.filter((review) => review.status === "pending" && review.reviewerRole === currentParentRole);
- }, [currentParentRole, expenseReviews]);
-
- const annualExpenses = useMemo(() => {
-  return expenses.filter((expense) => getExpenseYear(expense.expenseDate) === selectedYear);
- }, [expenses, selectedYear]);
-
- const annualTotals = useMemo(() => {
+ const totals = useMemo(() => {
+  let total = 0;
   let paidByParent1 = 0;
   let paidByParent2 = 0;
   let balanceNet = 0;
 
-  for (const expense of annualExpenses) {
+  for (const expense of expenses) {
+   total += expense.amount;
+
    if (expense.paidBy === "parent1") {
     paidByParent1 += expense.amount;
    } else {
@@ -1162,14 +724,72 @@ export default function ExpensesPage() {
   }
 
   return {
-   total: annualExpenses.reduce((sum, expense) => sum + expense.amount, 0),
+   total,
    paidByParent1,
    paidByParent2,
    balanceNet,
   };
+ }, [expenses]);
+
+ const balanceText = useMemo(() => {
+  if (Math.abs(totals.balanceNet) < 0.005) {
+   return `Comptes équilibrés entre ${parentNames.parent1} et ${parentNames.parent2}`;
+  }
+
+  if (totals.balanceNet > 0) {
+   return `${parentNames.parent2} doit ${formatCurrency(totals.balanceNet)}$ à ${parentNames.parent1}`;
+  }
+
+  return `${parentNames.parent1} doit ${formatCurrency(Math.abs(totals.balanceNet))}$ à ${parentNames.parent2}`;
+ }, [parentNames.parent1, parentNames.parent2, totals.balanceNet]);
+
+ const groupedExpenses = useMemo(() => {
+  const groups: Record<DateGroupKey, ExpenseItem[]> = {
+   today: [],
+   yesterday: [],
+   thisWeek: [],
+   thisMonth: [],
+   older: [],
+  };
+
+  const sorted = [...expenses].sort((a, b) => {
+   const aTime = new Date(a.expenseDate).getTime();
+   const bTime = new Date(b.expenseDate).getTime();
+   return bTime - aTime;
+  });
+
+  for (const expense of sorted) {
+   groups[getDateGroupKey(expense.expenseDate)].push(expense);
+  }
+
+  return groups;
+ }, [expenses]);
+
+ const groupOrder: DateGroupKey[] = ["today", "yesterday", "thisWeek", "thisMonth", "older"];
+
+ const annualExpenses = useMemo(() => {
+  return expenses.filter((expense) => getExpenseYear(expense.expenseDate) === selectedYear);
+ }, [expenses, selectedYear]);
+
+ const annualTotals = useMemo(() => {
+  let total = 0;
+  let paidByParent1 = 0;
+  let paidByParent2 = 0;
+
+  for (const expense of annualExpenses) {
+   total += expense.amount;
+
+   if (expense.paidBy === "parent1") {
+    paidByParent1 += expense.amount;
+   } else {
+    paidByParent2 += expense.amount;
+   }
+  }
+
+  return { total, paidByParent1, paidByParent2 };
  }, [annualExpenses]);
 
- const annualBarData = useMemo(() => {
+ const annualMonthlyData = useMemo(() => {
   const data = MONTH_LABELS.map((label) => ({
    month: label,
    parent1: 0,
@@ -1198,141 +818,55 @@ export default function ExpensesPage() {
    ...item,
    parent1: roundToTwo(item.parent1),
    parent2: roundToTwo(item.parent2),
+   total: roundToTwo(item.parent1 + item.parent2),
   }));
  }, [annualExpenses]);
 
  const annualCategoryData = useMemo(() => {
-  const totals = CATEGORIES.reduce(
-   (accumulator, currentCategory) => {
-    accumulator[currentCategory] = 0;
-    return accumulator;
-   },
-   {} as Record<ExpenseCategory, number>,
-  );
+  const totalsByCategory: Record<ExpenseCategory, number> = {
+   Médical: 0,
+   Scolaire: 0,
+   Vêtements: 0,
+   Activités: 0,
+   Nourriture: 0,
+   Autre: 0,
+  };
 
   for (const expense of annualExpenses) {
-   totals[expense.category] += expense.amount;
+   totalsByCategory[expense.category] += expense.amount;
   }
 
-  return CATEGORIES.map((item) => ({
-   name: item,
-   value: roundToTwo(totals[item]),
-   percentage: annualTotals.total > 0 ? (totals[item] / annualTotals.total) * 100 : 0,
-   color: CATEGORY_COLORS[item],
-  })).filter((item) => item.value > 0);
- }, [annualExpenses, annualTotals.total]);
-
- const annualTopPayerText = useMemo(() => {
-  if (Math.abs(annualTotals.paidByParent1 - annualTotals.paidByParent2) < 0.005) {
-   return `Égalité · ${formatCurrency(annualTotals.paidByParent1)}$ chacun`;
-  }
-
-  if (annualTotals.paidByParent1 > annualTotals.paidByParent2) {
-   return `${parentNames.parent1} · ${formatCurrency(annualTotals.paidByParent1)}$`;
-  }
-
-  return `${parentNames.parent2} · ${formatCurrency(annualTotals.paidByParent2)}$`;
- }, [annualTotals.paidByParent1, annualTotals.paidByParent2, parentNames.parent1, parentNames.parent2]);
+  return CATEGORIES.map((name) => ({
+   name,
+   value: roundToTwo(totalsByCategory[name]),
+  })).filter((entry) => entry.value > 0);
+ }, [annualExpenses]);
 
  const annualBalanceText = useMemo(() => {
-  if (Math.abs(annualTotals.balanceNet) < 0.005) {
+  const net = annualTotals.paidByParent1 - annualTotals.paidByParent2;
+
+  if (Math.abs(net) < 0.005) {
    return "Comptes équilibrés";
   }
 
-  if (annualTotals.balanceNet > 0) {
-   return `${parentNames.parent2} doit ${formatCurrency(annualTotals.balanceNet)}$ à ${parentNames.parent1}`;
+  if (net > 0) {
+   return `${parentNames.parent2} doit ${formatCurrency(net)}$ à ${parentNames.parent1}`;
   }
 
-  return `${parentNames.parent1} doit ${formatCurrency(Math.abs(annualTotals.balanceNet))}$ à ${parentNames.parent2}`;
- }, [annualTotals.balanceNet, parentNames.parent1, parentNames.parent2]);
+  return `${parentNames.parent1} doit ${formatCurrency(Math.abs(net))}$ à ${parentNames.parent2}`;
+ }, [annualTotals.paidByParent1, annualTotals.paidByParent2, parentNames.parent1, parentNames.parent2]);
 
- const onExportTaxReport = () => {
-  const doc = new jsPDF();
-  const fileName = `rapport-fiscal-2nest-${selectedYear}.pdf`;
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const rightMargin = pageWidth - 14;
-  const tableLeft = 14;
-  const tableWidth = pageWidth - 28;
-  const headerHeight = 9;
-  const rowHeight = 8;
-  const col1 = tableLeft + 2;
-  const col2 = tableLeft + tableWidth * 0.6;
-  const col3 = tableLeft + tableWidth * 0.8;
-  let y = 18;
+ const maxMonthlyValue = useMemo(() => {
+  return annualMonthlyData.reduce((max, item) => Math.max(max, item.total), 0);
+ }, [annualMonthlyData]);
 
-  doc.setFontSize(18);
-  doc.text(`Rapport fiscal 2nest ${selectedYear}`, 14, y);
-
-  y += 8;
-  doc.setLineWidth(0.3);
-  doc.line(14, y, rightMargin, y);
-
-  y += 8;
-  doc.setFontSize(11);
-  doc.text(`Parents: ${parentNames.parent1} et ${parentNames.parent2}`, 14, y);
-  y += 6;
-  doc.text(`Année fiscale: ${selectedYear}`, 14, y);
-
-  y += 10;
-  doc.setFontSize(13);
-  doc.text("Total par catégorie", 14, y);
-
-  y += 5;
-  doc.setFillColor(241, 247, 253);
-  doc.rect(tableLeft, y, tableWidth, headerHeight, "F");
-  doc.setDrawColor(208, 223, 238);
-  doc.rect(tableLeft, y, tableWidth, headerHeight);
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "bold");
-  doc.text("Catégorie", col1, y + 6);
-  doc.text("%", col2, y + 6);
-  doc.text("Montant", col3, y + 6);
-
-  y += headerHeight;
-  doc.setFont("helvetica", "normal");
-  for (const categoryName of CATEGORIES) {
-   const categoryValue = annualCategoryData.find((item) => item.name === categoryName)?.value ?? 0;
-   const categoryPct = annualTotals.total > 0 ? (categoryValue / annualTotals.total) * 100 : 0;
-
-   doc.rect(tableLeft, y, tableWidth, rowHeight);
-   doc.text(categoryName, col1, y + 5.5);
-   doc.text(`${categoryPct.toFixed(1)}%`, col2, y + 5.5);
-   doc.text(`${formatCurrency(categoryValue)}$`, col3, y + 5.5, { align: "left" });
-
-   y += rowHeight;
-  }
-
-  y += 10;
-  doc.setFontSize(13);
-  doc.setFont("helvetica", "bold");
-  doc.text("Totaux annuels", 14, y);
-
-  y += 6;
-  doc.setFont("helvetica", "normal");
-  const summaryLines = [
-   `Total des dépenses: ${formatCurrency(annualTotals.total)}$`,
-   `${parentNames.parent1} a payé: ${formatCurrency(annualTotals.paidByParent1)}$`,
-   `${parentNames.parent2} a payé: ${formatCurrency(annualTotals.paidByParent2)}$`,
-   `Solde final: ${annualBalanceText}`,
-  ];
-
-  for (const line of summaryLines) {
-   doc.text(line, 14, y);
-   y += 6;
-  }
-
-  y += 4;
-  doc.setFontSize(9);
-  doc.setTextColor(94, 122, 149);
-  doc.text(`Document généré le ${new Date().toLocaleDateString("fr-CA")}`, 14, y);
-
-  doc.save(fileName);
-  setToast({ message: "Rapport fiscal PDF généré.", variant: "success" });
- };
+ const maxCategoryValue = useMemo(() => {
+  return annualCategoryData.reduce((max, item) => Math.max(max, item.value), 0);
+ }, [annualCategoryData]);
 
  if (checkingSession || isLoadingExpenses) {
   return (
-   <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#F5F0EB] to-[#EDE8E3] px-6">
+   <div className="flex min-h-screen items-center justify-center bg-[#F5F0EB] px-6">
     <p className="text-sm font-medium text-[#6B5D55]">Chargement des dépenses...</p>
    </div>
   );
@@ -1340,7 +874,7 @@ export default function ExpensesPage() {
 
  if (configError) {
   return (
-   <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#F5F0EB] to-[#EDE8E3] px-6">
+   <div className="flex min-h-screen items-center justify-center bg-[#F5F0EB] px-6">
     <p className="max-w-xl text-center text-sm font-medium text-[#A85C52]">{configError}</p>
    </div>
   );
@@ -1351,623 +885,418 @@ export default function ExpensesPage() {
  }
 
  return (
-  <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#F5F0EB] via-[#EDE8E3] to-[#EDE8E3] px-4 py-8 sm:px-6 sm:py-10">
-   <div className="pointer-events-none absolute -top-32 -left-24 h-80 w-80 rounded-full bg-[#7C6B5D]/20 blur-3xl" />
-   <div className="pointer-events-none absolute right-0 top-1/2 h-72 w-72 -translate-y-1/2 rounded-full bg-[#A89080]/20 blur-3xl" />
+  <div className="min-h-screen bg-[#F5F0EB] px-4 py-6 sm:px-6 sm:py-8">
+   <main className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+    <header className="rounded-2xl border border-[#DDD2C7] bg-[#FBF8F4] p-4 sm:p-5">
+     <div className="flex items-start justify-between gap-3">
+      <div>
+       <h1 className="text-3xl font-semibold tracking-tight text-[#2C2420]">Dépenses</h1>
+       <p className="mt-3 text-2xl font-semibold leading-tight text-[#3B2F27]">{balanceText}</p>
+      </div>
 
-   <main className="relative mx-auto flex w-full max-w-6xl flex-col gap-6 rounded-3xl border border-white/70 bg-white/90 p-6 shadow-[0_2px_8px_rgba(44,36,32,0.08)] backdrop-blur-sm sm:p-8">
-    <header className="flex flex-wrap items-start justify-between gap-3">
-     <div>
-      <p className="text-xs font-semibold tracking-[0.2em] text-[#A89080]">FINANCES</p>
-      <h1 className="mt-1 text-3xl font-semibold tracking-tight text-[#2C2420]"> Dépenses</h1>
-     </div>
-
-     <div className="flex items-center gap-2">
       <button
        type="button"
-       onClick={() => setIsShareSettingsOpen((current) => !current)}
-       className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#D9D0C8] bg-white text-lg text-[#6B5D55] transition hover:bg-[#EDE8E3]"
-       title="Paramètres de partage"
-       aria-label="Paramètres de partage"
+       onClick={() => setIsAddExpenseModalOpen(true)}
+       disabled={isReadOnly}
+       className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#7C6B5D] text-white shadow-[0_8px_20px_rgba(44,36,32,0.16)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+       aria-label="Ajouter une dépense"
       >
-      <Settings size={16} />
+       <Plus size={20} />
       </button>
-      <Link
-       href="/dashboard"
-       className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
-      >
-        <ArrowLeft size={16} className="mr-2" />
-        Retour
-      </Link>
      </div>
-    </header>
 
-    {isShareSettingsOpen && (
-     <section className="rounded-2xl border border-[#D9D0C8] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-5">
-      <h2 className="text-base font-semibold text-[#2C2420]"> Paramètres de partage</h2>
-      <div className="mt-3 space-y-3">
-       {CATEGORIES.map((categoryName) => {
-        const parent1Pct = clampPercentage(shareRules[categoryName] ?? 50);
-        const parent2Pct = clampPercentage(100 - parent1Pct);
-
-        return (
-         <div key={categoryName} className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-          <p className="text-sm font-semibold text-[#2C2420]">{categoryName}</p>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-           <label className="text-xs font-medium text-[#6B5D55]">
-            Parent 1 (%)
-            <input
-             type="number"
-             min="0"
-             max="100"
-             step="1"
-             value={parent1Pct}
-             onChange={(event) => onChangeParent1Share(categoryName, event.target.value)}
-             className="mt-1 w-full rounded-xl border border-[#D9D0C8] px-3 py-2 text-sm text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-            />
-           </label>
-           <label className="text-xs font-medium text-[#6B5D55]">
-            Parent 2 (%)
-            <input
-             type="number"
-             value={parent2Pct}
-             readOnly
-             className="mt-1 w-full rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm text-[#2C2420]"
-            />
-           </label>
-          </div>
-         </div>
-        );
-       })}
-
-       <button
-        type="button"
-        onClick={onSaveShareRules}
-        disabled={isSavingShareRules}
-        className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
-       >
-        {isSavingShareRules ? "Sauvegarde..." : "Sauvegarder l'entente de partage"}
-       </button>
+     <section className="mt-4 rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] p-4">
+      <p className="text-xs font-semibold tracking-[0.14em] text-[#7A6A5E]">RÉSUMÉ</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+       <p className="text-sm text-[#5E5148]">Total des dépenses: <span className="font-semibold text-[#2C2420]">{formatCurrency(totals.total)}$</span></p>
+       <p className="text-sm text-[#5E5148]">{parentNames.parent1} a payé: <span className="font-semibold text-[#2C2420]">{formatCurrency(totals.paidByParent1)}$</span></p>
+       <p className="text-sm text-[#5E5148]">{parentNames.parent2} a payé: <span className="font-semibold text-[#2C2420]">{formatCurrency(totals.paidByParent2)}$</span></p>
+       <p className="text-sm text-[#5E5148]">Solde: <span className="font-semibold text-[#2C2420]">{balanceText}</span></p>
       </div>
      </section>
-    )}
+    </header>
 
-    <section className="rounded-2xl border border-[#D9D0C8] bg-white p-2 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-3">
-     <div className="grid gap-2 sm:grid-cols-2">
+    <section className="rounded-2xl border border-[#DDD2C7] bg-[#FBF8F4] p-2">
+     <div className="grid grid-cols-2 gap-2">
       <button
        type="button"
        onClick={() => setActiveTab("expenses")}
        className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
         activeTab === "expenses"
-         ? "bg-[#EDE8E3] text-[#6B5D55]"
-         : "border border-[#D9D0C8] bg-white text-[#6B5D55] hover:bg-[#F5F0EB]"
+         ? "bg-[#E5DBD0] text-[#4E4036]"
+         : "bg-white text-[#6B5D55] hover:bg-[#F4EEE7]"
        }`}
       >
-        Dépenses
+       Dépenses
       </button>
       <button
        type="button"
-       onClick={() => setActiveTab("annual")}
+       onClick={() => setActiveTab("statistics")}
        className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
-        activeTab === "annual"
-         ? "bg-[#EDE8E3] text-[#6B5D55]"
-         : "border border-[#D9D0C8] bg-white text-[#6B5D55] hover:bg-[#F5F0EB]"
+        activeTab === "statistics"
+         ? "bg-[#E5DBD0] text-[#4E4036]"
+         : "bg-white text-[#6B5D55] hover:bg-[#F4EEE7]"
        }`}
       >
-        Tableau de bord annuel
+       Statistiques
       </button>
      </div>
     </section>
 
     {activeTab === "expenses" ? (
-     <>
-      <section className="rounded-2xl border border-[#D9D0C8] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-5">
-       {isReadOnly && (
-      <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm text-[#6B5D55]">
-       Consultation seule dans cet espace pour votre rôle.
-      </p>
-       )}
-       <button
-        type="button"
-      disabled={isReadOnly}
-        onClick={() => setIsAddExpenseFormOpen(true)}
-      className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-       >
-          <PlusCircle size={16} className="mr-2 inline-flex text-white" />
-          Ajouter une dépense
-       </button>
-
-       <div className="mt-4 flex items-center justify-between rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2">
-        <button
-         type="button"
-         onClick={() => setSelectedMonth((current) => shiftMonth(current, -1))}
-         className="rounded-lg px-2 py-1 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
-        >
-         <ChevronLeft size={16} />
-        </button>
-        <div className="text-sm font-semibold text-[#6B5D55]">{formatMonthLabel(selectedMonth)}</div>
-        <button
-         type="button"
-         onClick={() => setSelectedMonth((current) => shiftMonth(current, 1))}
-         className="rounded-lg px-2 py-1 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
-        >
-         <ChevronRight size={16} />
-        </button>
-       </div>
-      </section>
-
-      {isAddExpenseFormOpen && (
-       <section className="rounded-2xl border border-[#D9D0C8] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-5">
-        <div className="mb-4 flex items-center justify-between gap-2">
-         <h2 className="text-xl font-semibold text-[#2C2420]">Ajouter une dépense</h2>
-         <button
-          type="button"
-          onClick={() => setIsAddExpenseFormOpen(false)}
-          className="rounded-xl border border-[#D9D0C8] bg-white px-3 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
-         >
-          Fermer
-         </button>
-        </div>
-
-        {formError && (
-         <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm text-[#A85C52]">{formError}</p>
-        )}
-
-        <form className="grid gap-3 sm:grid-cols-2" onSubmit={onAddExpense}>
-         <div>
-          <label htmlFor="amount" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-           Montant ($)
-          </label>
-          <input
-           id="amount"
-           type="number"
-           min="0"
-           step="0.01"
-           value={amount}
-             disabled={isReadOnly}
-           onChange={(event) => setAmount(event.target.value)}
-           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-           placeholder="0.00"
-          />
-         </div>
-
-         <div>
-          <label htmlFor="description" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-           Description
-          </label>
-          <input
-           id="description"
-           type="text"
-           value={description}
-             disabled={isReadOnly}
-           onChange={(event) => setDescription(event.target.value)}
-           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-           placeholder="Ex: Pharmacie"
-          />
-         </div>
-
-         <div>
-          <label htmlFor="category" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-           Catégorie
-          </label>
-          <select
-           id="category"
-           value={category}
-             disabled={isReadOnly}
-           onChange={(event) => setCategory(event.target.value as ExpenseCategory)}
-           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-          >
-           {CATEGORIES.map((item) => (
-            <option key={item} value={item}>
-             {item}
-            </option>
-           ))}
-          </select>
-         </div>
-
-         <div>
-          <label htmlFor="paidBy" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-           Payé par
-          </label>
-          <select
-           id="paidBy"
-           value={paidBy}
-             disabled={isReadOnly}
-           onChange={(event) => setPaidBy(event.target.value as PaidBy)}
-           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-          >
-           <option value="parent1">Parent 1</option>
-           <option value="parent2">Parent 2</option>
-          </select>
-         </div>
-
-         <div className="sm:col-span-2">
-          <label htmlFor="expenseDate" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-           Date de la dépense
-          </label>
-          <input
-           id="expenseDate"
-           type="date"
-           value={expenseDate}
-             disabled={isReadOnly}
-           onChange={(event) => setExpenseDate(event.target.value)}
-           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-          />
-         </div>
-
-         <div className="sm:col-span-2 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-          <label htmlFor="receipt" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-[#EDE8E3] px-4 py-2 text-sm font-semibold text-[#7C6B5D] transition hover:brightness-95">
-            <PlusCircle size={14} className="mr-2" />
-            Ajouter un reçu
-          </label>
-          <input
-           id="receipt"
-           type="file"
-             disabled={isReadOnly}
-           accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
-           onChange={onReceiptChange}
-           className="hidden"
-          />
-          <p className="mt-2 text-xs text-[#6B5D55]">Formats acceptés: JPG, PNG, PDF</p>
-
-          {receiptFile && (
-           <p className="mt-2 text-sm font-medium text-[#6B5D55]">Fichier sélectionné: {receiptFile.name}</p>
-          )}
-
-          {receiptPreviewUrl && receiptMimeType.startsWith("image/") && (
-           <div className="mt-3 overflow-hidden rounded-xl border border-[#D9D0C8] bg-white p-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={receiptPreviewUrl} alt="Aperçu du reçu" className="max-h-52 w-auto rounded-lg object-contain" />
-           </div>
-          )}
-         </div>
-
-         <button
-          type="submit"
-         disabled={isCreatingExpense || isReadOnly}
-          className="sm:col-span-2 mt-1 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
-         >
-          {isCreatingExpense ? "Ajout..." : "Ajouter la dépense"}
-         </button>
-        </form>
-       </section>
+     <section className="rounded-2xl border border-[#DDD2C7] bg-[#FBF8F4] p-4 sm:p-5">
+      {isReadOnly && (
+       <p className="mb-4 rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] px-4 py-3 text-sm text-[#6B5D55]">
+        Consultation seule dans cet espace pour votre rôle.
+       </p>
       )}
 
-      <section className="rounded-2xl border border-[#D9D0C8] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-5">
-       {listError && (
-        <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm text-[#A85C52]">{listError}</p>
+      {listError && (
+       <p className="mb-4 rounded-xl border border-[#E3D9CE] bg-[#F8E8E4] px-4 py-3 text-sm text-[#A85C52]">{listError}</p>
+      )}
+
+      <div className="space-y-5">
+       {expenses.length === 0 ? (
+        <p className="rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] px-4 py-3 text-sm text-[#6B5D55]">
+         Aucune dépense pour l'instant.
+        </p>
+       ) : (
+        groupOrder.map((groupKey) => {
+         const items = groupedExpenses[groupKey];
+         if (items.length === 0) {
+          return null;
+         }
+
+         return (
+          <div key={groupKey}>
+           <div className="mb-3 flex items-center gap-3">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#8A7A6E]">{getDateGroupLabel(groupKey)}</span>
+            <div className="h-px flex-1 bg-[#E5DACE]" />
+           </div>
+
+           <div className="space-y-2">
+            {items.map((expense) => {
+             const meta = CATEGORY_META[expense.category];
+             const Icon = meta.icon;
+             const payerName = expense.paidBy === "parent1" ? parentNames.parent1 : parentNames.parent2;
+             const expenseDateText = new Date(expense.expenseDate).toLocaleDateString("fr-CA", {
+              weekday: "short",
+              day: "2-digit",
+              month: "short",
+             });
+
+             return (
+              <article key={expense.id} className="rounded-xl border border-[#E6DBCF] bg-white px-3 py-3 sm:px-4">
+               <div className="flex items-start gap-3">
+                <div className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${meta.iconBg}`}>
+                 <Icon size={18} className={meta.iconFg} />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                 <p className="truncate text-sm font-semibold text-[#2C2420]">{expense.description}</p>
+                 <p className="mt-1 text-xs text-[#7B6E65]">{expenseDateText}</p>
+                 {expense.receiptUrl && (
+                  <a
+                   href={expense.receiptUrl}
+                   target="_blank"
+                   rel="noreferrer"
+                   className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[#7C6B5D] underline-offset-2 hover:underline"
+                  >
+                   <ReceiptText size={12} />
+                   Reçu
+                  </a>
+                 )}
+                </div>
+
+                <div className="text-right">
+                 <p className="text-base font-bold text-[#2C2420]">{formatCurrency(expense.amount)}$</p>
+                 <p className="mt-0.5 text-[11px] text-[#6F6258]">Payé par {payerName}</p>
+                 <span
+                  className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                   expense.reimbursed
+                    ? "bg-[#E8F3EA] text-[#3D7A4B]"
+                    : "bg-[#FBEAD6] text-[#B06B1D]"
+                  }`}
+                 >
+                  {expense.reimbursed ? "Remboursé" : "En attente"}
+                 </span>
+
+                 {!isReadOnly && (
+                  <div className="mt-2 flex justify-end gap-2">
+                   {!expense.reimbursed && (
+                    <button
+                     type="button"
+                     onClick={() => onMarkReimbursed(expense.id)}
+                     disabled={isMarkingReimbursed || deletingExpenseId === expense.id}
+                     className="rounded-lg border border-[#DCD1C6] bg-[#F6F1EA] px-2 py-1 text-[11px] font-semibold text-[#5E5046] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                     Rembourser
+                    </button>
+                   )}
+                   <button
+                    type="button"
+                    onClick={() => onDeleteExpense(expense)}
+                    disabled={deletingExpenseId === expense.id || isMarkingReimbursed}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[#E8D3CF] bg-[#FCF4F2] text-[#B56658] disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label="Supprimer la dépense"
+                   >
+                    <Trash2 size={13} />
+                   </button>
+                  </div>
+                 )}
+                </div>
+               </div>
+              </article>
+             );
+            })}
+           </div>
+          </div>
+         );
+        })
        )}
-
-       <div className="space-y-3">
-        {filteredExpenses.length === 0 ? (
-         <p className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm text-[#6B5D55]">
-          Aucune dépense pour {formatMonthLabel(selectedMonth)}.
-         </p>
-        ) : (
-         filteredExpenses.map((expense) => (
-          <article key={expense.id} className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-4">
-           {(() => {
-            const review = reviewByExpenseId.get(expense.id);
-            const reviewStatus = review?.status ?? "pending";
-            const statusClass =
-             reviewStatus === "approved"
-              ? "border-[#D9D0C8] bg-[#EDE8E3] text-[#6B8F71]"
-              : reviewStatus === "contested"
-               ? "border-[#D9D0C8] bg-[#F5F0EB] text-[#A85C52]"
-               : "border-[#D9D0C8] bg-[#F5F0EB] text-[#6B5D55]";
-
-              const statusIcon =
-               reviewStatus === "approved" ? (
-                <CheckCircle size={12} className="mr-1" />
-               ) : reviewStatus === "contested" ? (
-                <XCircle size={12} className="mr-1" />
-               ) : (
-                <Clock size={12} className="mr-1" />
-               );
-
-            return (
-             <div className="mb-3 space-y-1">
-              <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusClass}`}>
-                 {statusIcon}
-               {reviewStatus === "approved" ? "Approuvée" : reviewStatus === "contested" ? "Contestée" : "En attente d'approbation"}
-              </span>
-              <p className="text-xs text-[#6B5D55]">
-               Demande créée le {new Date(review?.createdAt ?? expense.expenseDate).toLocaleString("fr-CA")}
-               {review?.reviewedAt ? ` · Décision le ${new Date(review.reviewedAt).toLocaleString("fr-CA")}` : ""}
-              </p>
-              {review?.contestReason && <p className="text-xs font-medium text-[#A85C52]">Raison: {review.contestReason}</p>}
-             </div>
-            );
-           })()}
-
-           <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-             <p className="text-lg font-semibold text-[#2C2420]">{formatCurrency(expense.amount)}$</p>
-             <p className="mt-1 text-sm font-medium text-[#6B5D55]">{expense.description}</p>
-             <p className="mt-1 text-xs text-[#6B5D55]">
-              {expense.category} · {new Date(expense.expenseDate).toLocaleDateString("fr-CA")}
-             </p>
-            </div>
-
-            <div className="text-right">
-             <p className="text-xs font-semibold text-[#A89080]">Payé par</p>
-             <p className={`mt-1 rounded-full px-3 py-1 text-xs font-semibold ${
-              expense.paidBy === "parent1"
-               ? "bg-[#EDE8E3] text-[#7C6B5D]"
-               : "bg-[#E9F8EE] text-[#6B8F71]"
-             }`}>
-              {expense.paidBy === "parent1" ? "Parent 1" : "Parent 2"}
-             </p>
-            </div>
-           </div>
-
-           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-             <span
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-               expense.reimbursed
-                ? "border border-[#D9D0C8] bg-[#EDE8E3] text-[#6B8F71]"
-                : "border border-[#D9D0C8] bg-[#F5F0EB] text-[#6B5D55]"
-              }`}
-             >
-              {expense.reimbursed ? "Remboursée" : "En attente de remboursement"}
-             </span>
-             {expense.receiptUrl && getReceiptType(expense.receiptUrl) !== "pdf" && (
-              <button
-               type="button"
-               onClick={() => openReceiptViewer(expense)}
-               className="overflow-hidden rounded-lg border border-[#D9D0C8] bg-white transition hover:brightness-95"
-               title="Ouvrir la photo du reçu"
-              >
-               {/* eslint-disable-next-line @next/next/no-img-element */}
-               <img
-                src={expense.receiptUrl}
-                alt="Miniature du reçu"
-                className="h-[60px] w-[60px] object-cover"
-               />
-              </button>
-             )}
-
-             {expense.receiptUrl && getReceiptType(expense.receiptUrl) === "pdf" && (
-              <a
-               href={expense.receiptUrl}
-               target="_blank"
-               rel="noreferrer"
-               className="rounded-full border border-[#D9D0C8] bg-white px-3 py-1 text-xs font-semibold text-[#7C6B5D] transition hover:bg-[#F5F0EB]"
-               title="Ouvrir le reçu PDF"
-              >
-                <Download size={12} className="mr-1 inline-flex" />
-                Reçu PDF
-              </a>
-             )}
-
-             {!expense.receiptUrl && (
-              <span className="text-xs font-medium text-[#7A8FA5]">Aucun reçu</span>
-             )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-             {!expense.reimbursed && (
-              <button
-               type="button"
-               onClick={() => onMarkReimbursed(expense.id)}
-                disabled={isReadOnly || isMarkingReimbursed || deletingExpenseId === expense.id}
-               className="rounded-xl bg-[#7C6B5D] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-               Marquer comme remboursé
-              </button>
-             )}
-
-             <button
-              type="button"
-              onClick={() => onDeleteExpense(expense)}
-              disabled={isReadOnly || deletingExpenseId === expense.id || isMarkingReimbursed}
-              className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm font-semibold text-[#A85C52] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
-             >
-                <Trash2 size={14} className="mr-2 inline-flex" />
-                {deletingExpenseId === expense.id ? "Suppression..." : "Supprimer"}
-             </button>
-            </div>
-           </div>
-          </article>
-         ))
-        )}
-       </div>
-
-       <button
-        type="button"
-        disabled={isReadOnly}
-        onClick={() => setIsAddExpenseFormOpen(true)}
-        className="mt-4 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-base font-semibold text-white shadow-[0_1px_4px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-       >
-          <PlusCircle size={16} className="mr-2 inline-flex text-white" />
-          Ajouter une dépense
-       </button>
-
-       <div className="mt-4 rounded-2xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3">
-        <p className="text-xs font-semibold tracking-[0.18em] text-[#A89080]">SOLDE ACTUEL</p>
-        <p className="mt-2 text-sm font-semibold text-[#2C2420]">{balanceText}</p>
-       </div>
-      </section>
-     </>
+      </div>
+     </section>
     ) : (
-     <section className="rounded-2xl border border-[#D9D0C8] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)] sm:p-5">
-      <p className="text-xs font-semibold tracking-[0.2em] text-[#A89080]">ANALYSE</p>
-      <h2 className="mt-1 text-xl font-semibold text-[#2C2420]"> Tableau de bord annuel</h2>
-
-      <div className="mt-4 flex items-center justify-between rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2">
+     <section className="rounded-2xl border border-[#DDD2C7] bg-[#FBF8F4] p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] px-3 py-2">
        <button
         type="button"
         onClick={() => setSelectedYear((current) => current - 1)}
-        className="rounded-lg px-2 py-1 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
+        className="rounded-lg p-1 text-[#6B5D55] hover:bg-[#E7DDD2]"
+        aria-label="Année précédente"
        >
         <ChevronLeft size={16} />
        </button>
-
-       <div className="flex items-center gap-2 text-sm font-semibold text-[#6B5D55]">
-        <button
-         type="button"
-         onClick={() => setSelectedYear((current) => current - 1)}
-         className="rounded-lg px-2 py-1 transition hover:bg-[#EDE8E3]"
-        >
-         {selectedYear - 1}
-        </button>
-        <span>|</span>
-        <button type="button" className="rounded-lg bg-[#EDE8E3] px-2 py-1 text-[#7C6B5D]">
-         {selectedYear}
-        </button>
-        <span>|</span>
-        <button
-         type="button"
-         onClick={() => setSelectedYear((current) => current + 1)}
-         className="rounded-lg px-2 py-1 transition hover:bg-[#EDE8E3]"
-        >
-         {selectedYear + 1}
-        </button>
-       </div>
-
+       <p className="text-sm font-semibold text-[#4E4036]">{selectedYear}</p>
        <button
         type="button"
         onClick={() => setSelectedYear((current) => current + 1)}
-        className="rounded-lg px-2 py-1 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
+        className="rounded-lg p-1 text-[#6B5D55] hover:bg-[#E7DDD2]"
+        aria-label="Année suivante"
        >
-          <ChevronRight size={16} />
+        <ChevronRight size={16} />
        </button>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-       <div className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-        <p className="text-xs font-semibold tracking-[0.12em] text-[#A89080]"> Total annuel</p>
-        <p className="mt-2 text-lg font-semibold text-[#2C2420]">{formatCurrency(annualTotals.total)}$</p>
-       </div>
-       <div className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-        <p className="text-xs font-semibold tracking-[0.12em] text-[#A89080]"> Qui a payé le plus</p>
-        <p className="mt-2 text-sm font-semibold text-[#2C2420]">{annualTopPayerText}</p>
-       </div>
-       <div className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-        <p className="text-xs font-semibold tracking-[0.12em] text-[#A89080]"> Solde annuel</p>
-        <p className="mt-2 text-sm font-semibold text-[#2C2420]">{annualBalanceText}</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+       <p className="rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] px-3 py-2 text-sm text-[#5E5148]">
+        Total: <span className="font-semibold text-[#2C2420]">{formatCurrency(annualTotals.total)}$</span>
+       </p>
+       <p className="rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] px-3 py-2 text-sm text-[#5E5148]">
+        {parentNames.parent1}: <span className="font-semibold text-[#2C2420]">{formatCurrency(annualTotals.paidByParent1)}$</span>
+       </p>
+       <p className="rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] px-3 py-2 text-sm text-[#5E5148]">
+        {parentNames.parent2}: <span className="font-semibold text-[#2C2420]">{formatCurrency(annualTotals.paidByParent2)}$</span>
+       </p>
+       <p className="rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] px-3 py-2 text-sm text-[#5E5148]">
+        Solde: <span className="font-semibold text-[#2C2420]">{annualBalanceText}</span>
+       </p>
+      </div>
+
+      <div className="mt-5 rounded-xl border border-[#E3D9CE] bg-white p-3">
+       <p className="text-xs font-semibold tracking-[0.12em] text-[#8A7A6E]">DÉPENSES PAR MOIS</p>
+
+       <div className="mt-3 space-y-2">
+        {annualMonthlyData.map((item) => {
+         const width = maxMonthlyValue > 0 ? (item.total / maxMonthlyValue) * 100 : 0;
+
+         return (
+          <div key={item.month} className="grid grid-cols-[40px_1fr_68px] items-center gap-2">
+           <span className="text-xs font-medium text-[#7A6D64]">{item.month}</span>
+           <div className="h-3 rounded-full bg-[#EFE7DF]">
+            <div
+             className="h-3 rounded-full bg-[#7C6B5D]"
+             style={{ width: `${Math.max(width, item.total > 0 ? 8 : 0)}%` }}
+            />
+           </div>
+           <span className="text-right text-xs font-semibold text-[#4E4036]">{formatCurrency(item.total)}$</span>
+          </div>
+         );
+        })}
        </div>
       </div>
 
-      <div className="mt-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-       <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">DÉPENSES PAR MOIS</p>
-       <div className="mt-3 h-72 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-         <BarChart data={annualBarData}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#D9D0C8" />
-          <XAxis dataKey="month" stroke="#A89080" />
-          <YAxis stroke="#A89080" tickFormatter={(value) => `${value}$`} />
-          <Tooltip formatter={(value) => formatTooltipCurrencyValue(value)} />
-          <Legend />
-          <Bar dataKey="parent1" name={parentNames.parent1} fill="#7C6B5D" radius={[6, 6, 0, 0]} />
-          <Bar dataKey="parent2" name={parentNames.parent2} fill="#6B8F71" radius={[6, 6, 0, 0]} />
-         </BarChart>
-        </ResponsiveContainer>
-       </div>
-      </div>
+      <div className="mt-4 rounded-xl border border-[#E3D9CE] bg-white p-3">
+       <p className="text-xs font-semibold tracking-[0.12em] text-[#8A7A6E]">RÉPARTITION PAR CATÉGORIE</p>
 
-      <div className="mt-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-       <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">RÉPARTITION PAR CATÉGORIE</p>
        {annualCategoryData.length === 0 ? (
         <p className="mt-3 text-sm text-[#6B5D55]">Aucune dépense pour {selectedYear}.</p>
        ) : (
-        <div className="mt-3 grid gap-4 lg:grid-cols-2">
-         <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-           <PieChart>
-            <Pie data={annualCategoryData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={95}>
-             {annualCategoryData.map((entry) => (
-              <Cell key={entry.name} fill={entry.color} />
-             ))}
-            </Pie>
-            <Tooltip formatter={(value) => formatTooltipCurrencyValue(value)} />
-           </PieChart>
-          </ResponsiveContainer>
-         </div>
+        <div className="mt-3 space-y-2">
+         {annualCategoryData.map((item) => {
+          const width = maxCategoryValue > 0 ? (item.value / maxCategoryValue) * 100 : 0;
+          const meta = CATEGORY_META[item.name];
+          const Icon = meta.icon;
 
-         <div className="space-y-2">
-          {annualCategoryData.map((item) => (
-           <div key={item.name} className="flex items-center justify-between rounded-lg border border-[#D9D0C8] bg-white px-3 py-2">
+          return (
+           <div key={item.name} className="grid grid-cols-[1fr_68px] items-center gap-2">
             <div className="flex items-center gap-2">
-             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-             <span className="text-sm font-medium text-[#6B5D55]">{item.name}</span>
+             <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full ${meta.iconBg}`}>
+              <Icon size={12} className={meta.iconFg} />
+             </span>
+             <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-[#5E5148]">{item.name}</p>
+              <div className="mt-1 h-2 rounded-full bg-[#EFE7DF]">
+               <div
+                className="h-2 rounded-full bg-[#A89080]"
+                style={{ width: `${Math.max(width, item.value > 0 ? 6 : 0)}%` }}
+               />
+              </div>
+             </div>
             </div>
-            <span className="text-sm font-semibold text-[#2C2420]">{item.percentage.toFixed(1)}% · {formatCurrency(item.value)}$</span>
+            <p className="text-right text-xs font-semibold text-[#4E4036]">{formatCurrency(item.value)}$</p>
            </div>
-          ))}
-         </div>
+          );
+         })}
         </div>
        )}
       </div>
-
-      <button
-       type="button"
-       onClick={onExportTaxReport}
-       className="mt-4 w-full rounded-xl border border-[#D9D0C8] bg-[#EDE8E3] px-4 py-3 text-sm font-semibold text-[#7C6B5D] transition hover:brightness-95"
-      >
-        <Download size={16} className="mr-2 inline-flex" />
-        Exporter pour les impôts
-      </button>
      </section>
     )}
    </main>
 
-   {receiptViewerExpense?.receiptUrl && (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-     <div className="w-full max-w-3xl rounded-2xl border border-white/70 bg-white p-5 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
-      <div className="overflow-hidden rounded-xl border border-[#D9D0C8] bg-[#F5F0EB]">
-       {/* eslint-disable-next-line @next/next/no-img-element */}
-       <img src={receiptViewerExpense.receiptUrl} alt="Reçu" className="max-h-[70vh] w-full object-contain" />
-      </div>
-
-      <div className="mt-4 space-y-1">
-       <p className="text-sm text-[#6B5D55]">Montant</p>
-       <p className="text-base font-semibold text-[#2C2420]">{formatCurrency(receiptViewerExpense.amount)}$</p>
-       <p className="pt-1 text-sm text-[#6B5D55]">Description</p>
-       <p className="text-sm font-medium text-[#6B5D55]">{receiptViewerExpense.description}</p>
-      </div>
-
-      <button
-       type="button"
-       onClick={closeReceiptViewer}
-       className="mt-5 w-full rounded-xl border border-[#D9D0C8] bg-white px-4 py-2.5 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
-      >
-       Fermer
-      </button>
-     </div>
-    </div>
-   )}
-
-   {contestingReview && (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F223680] p-4">
-     <div className="w-full max-w-lg rounded-2xl border border-white/70 bg-white p-5 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
-      <h3 className="text-lg font-semibold text-[#2C2420]">Contester la dépense</h3>
-      <p className="mt-1 text-sm text-[#6B5D55]">Explique la raison de contestation (tracée et datée).</p>
-      <textarea
-       value={contestReasonInput}
-       onChange={(event) => setContestReasonInput(event.target.value)}
-       rows={4}
-       className="mt-3 w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-sm text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/20"
-       placeholder="Ex: Montant contesté, reçu illisible, dépense hors accord..."
-      />
-      <div className="mt-4 flex gap-2">
+   {isAddExpenseModalOpen && (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#2A211B66] p-0 sm:items-center sm:p-4">
+     <div className="w-full max-w-xl rounded-t-2xl border border-[#E0D6CB] bg-[#FBF8F4] p-4 shadow-[0_20px_45px_rgba(32,24,18,0.18)] sm:rounded-2xl sm:p-5">
+      <div className="mb-4 flex items-center justify-between">
+       <h2 className="text-xl font-semibold text-[#2C2420]">Ajouter une dépense</h2>
        <button
         type="button"
-        onClick={onSubmitContestExpense}
-        disabled={isSubmittingReview}
-        className="w-full rounded-xl bg-[#A85C52] px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+        onClick={() => setIsAddExpenseModalOpen(false)}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#E0D6CB] bg-white text-[#6B5D55]"
+        aria-label="Fermer"
        >
-        Enregistrer la contestation
-       </button>
-       <button
-        type="button"
-        onClick={closeContestModal}
-        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-4 py-2.5 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
-       >
-        Annuler
+        <X size={16} />
        </button>
       </div>
+
+      {formError && (
+       <p className="mb-4 rounded-xl border border-[#E3D9CE] bg-[#F8E8E4] px-4 py-3 text-sm text-[#A85C52]">{formError}</p>
+      )}
+
+      <form className="space-y-3" onSubmit={onAddExpense}>
+       <div>
+        <label htmlFor="description" className="mb-1 block text-sm font-medium text-[#5E5148]">
+         Titre / Description
+        </label>
+        <input
+         id="description"
+         type="text"
+         value={description}
+         disabled={isReadOnly}
+         onChange={(event) => setDescription(event.target.value)}
+         className="w-full rounded-xl border border-[#DCCFC3] bg-white px-3 py-2.5 text-sm text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/15"
+         placeholder="Ex: Pharmacie"
+        />
+       </div>
+
+       <div>
+        <label htmlFor="amount" className="mb-1 block text-sm font-medium text-[#5E5148]">
+         Montant ($)
+        </label>
+        <input
+         id="amount"
+         type="number"
+         min="0"
+         step="0.01"
+         value={amount}
+         disabled={isReadOnly}
+         onChange={(event) => setAmount(event.target.value)}
+         className="w-full rounded-xl border border-[#DCCFC3] bg-white px-3 py-2.5 text-sm text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/15"
+         placeholder="0.00"
+        />
+       </div>
+
+       <div>
+        <p className="mb-2 text-sm font-medium text-[#5E5148]">Catégorie</p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+         {CATEGORIES.map((item) => {
+          const meta = CATEGORY_META[item];
+          const Icon = meta.icon;
+          const isSelected = category === item;
+
+          return (
+           <button
+            key={item}
+            type="button"
+            disabled={isReadOnly}
+            onClick={() => setCategory(item)}
+            className={`rounded-xl border px-3 py-2 text-left transition ${
+             isSelected
+              ? "border-[#7C6B5D] bg-[#EFE7DF]"
+              : "border-[#E0D6CB] bg-white hover:bg-[#F5EEE6]"
+            }`}
+           >
+            <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full ${meta.iconBg}`}>
+             <Icon size={12} className={meta.iconFg} />
+            </span>
+            <span className="mt-1 block text-xs font-medium text-[#4E4036]">{item}</span>
+           </button>
+          );
+         })}
+        </div>
+       </div>
+
+       <div>
+        <label htmlFor="paidBy" className="mb-1 block text-sm font-medium text-[#5E5148]">
+         Payé par
+        </label>
+        <select
+         id="paidBy"
+         value={paidBy}
+         disabled={isReadOnly}
+         onChange={(event) => setPaidBy(event.target.value as PaidBy)}
+         className="w-full rounded-xl border border-[#DCCFC3] bg-white px-3 py-2.5 text-sm text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/15"
+        >
+         <option value="parent1">{parentNames.parent1}</option>
+         <option value="parent2">{parentNames.parent2}</option>
+        </select>
+       </div>
+
+       <div>
+        <label htmlFor="expenseDate" className="mb-1 block text-sm font-medium text-[#5E5148]">
+         Date
+        </label>
+        <input
+         id="expenseDate"
+         type="date"
+         value={expenseDate}
+         disabled={isReadOnly}
+         onChange={(event) => setExpenseDate(event.target.value)}
+         className="w-full rounded-xl border border-[#DCCFC3] bg-white px-3 py-2.5 text-sm text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-4 focus:ring-[#7C6B5D]/15"
+        />
+       </div>
+
+       <div>
+        <label htmlFor="receipt" className="mb-1 block text-sm font-medium text-[#5E5148]">
+         Photo du reçu (optionnel)
+        </label>
+        <label
+         htmlFor="receipt"
+         className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#DCCFC3] bg-white px-3 py-2 text-sm font-medium text-[#5E5148] hover:bg-[#F5EEE6]"
+        >
+         <ReceiptText size={14} />
+         Choisir un fichier
+        </label>
+        <input
+         id="receipt"
+         type="file"
+         disabled={isReadOnly}
+         accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+         onChange={onReceiptChange}
+         className="hidden"
+        />
+        {receiptFile && <p className="mt-2 text-xs text-[#6B5D55]">Fichier: {receiptFile.name}</p>}
+       </div>
+
+       <button
+        type="submit"
+        disabled={isCreatingExpense || isReadOnly}
+        className="mt-2 w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(44,36,32,0.12)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+       >
+        {isCreatingExpense ? "Ajout..." : "Ajouter"}
+       </button>
+      </form>
      </div>
     </div>
    )}
@@ -1976,13 +1305,14 @@ export default function ExpensesPage() {
     <div
      className={`fixed right-4 bottom-4 z-[60] max-w-sm rounded-xl border px-4 py-3 text-sm font-medium shadow-[0_14px_30px_rgba(45,105,64,0.2)] ${
       toast.variant === "success"
-       ? "border-[#D9D0C8] bg-[#EDE8E3] text-[#6B8F71]"
-       : "border-[#D9D0C8] bg-[#F5F0EB] text-[#A85C52]"
+       ? "border-[#CFE2D2] bg-[#E8F3EA] text-[#3D7A4B]"
+       : "border-[#E9CFC8] bg-[#F8E8E4] text-[#A85C52]"
      }`}
     >
      {toast.message}
     </div>
    )}
+
   </div>
  );
 }
