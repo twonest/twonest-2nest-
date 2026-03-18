@@ -13,6 +13,7 @@ import {
  HeartPulse,
  Plus,
  ReceiptText,
+ Settings,
  Shirt,
  Trash2,
  UtensilsCrossed,
@@ -22,6 +23,8 @@ import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import AccessDeniedCard from "@/components/AccessDeniedCard";
 import { useFamily } from "@/components/FamilyProvider";
 import { getFeatureAccess } from "@/lib/family";
+import ShareSettingsModal from "@/components/ShareSettingsModal";
+import { useShareRatios } from "@/lib/useShareRatios";
 
 type ExpenseCategory = "Médical" | "Scolaire" | "Vêtements" | "Activités" | "Nourriture" | "Autre";
 type PaidBy = "parent1" | "parent2";
@@ -39,6 +42,9 @@ type ExpenseItem = {
  receiptUrl: string | null;
  parent1ShareAmount: number;
  parent2ShareAmount: number;
+ customSplit?: boolean;
+ customParent1Pct?: number;
+ customParent2Pct?: number;
 };
 
 type SupabaseExpenseRow = {
@@ -68,6 +74,9 @@ type SupabaseExpenseRow = {
  parent2_share_amount?: number | string;
  split_parent1?: number | string;
  split_parent2?: number | string;
+ custom_split?: boolean;
+ custom_parent1_pct?: number;
+ custom_parent2_pct?: number;
 };
 
 type ParentNames = {
@@ -285,11 +294,13 @@ function getDateGroupLabel(group: DateGroupKey): string {
 export default function ExpensesPage() {
  const router = useRouter();
  const { activeFamilyId, currentRole: familyRole, currentPermissions } = useFamily();
+ const { ratios, saveRatios } = useShareRatios(activeFamilyId);
 
  const [user, setUser] = useState<User | null>(null);
  const [checkingSession, setCheckingSession] = useState(true);
  const [configError, setConfigError] = useState("");
  const [currentFamilyId, setCurrentFamilyId] = useState<string | null>(null);
+ const [isShareSettingsOpen, setIsShareSettingsOpen] = useState(false);
 
  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
  const [isLoadingExpenses, setIsLoadingExpenses] = useState(true);
@@ -303,6 +314,9 @@ export default function ExpensesPage() {
  const [paidBy, setPaidBy] = useState<PaidBy>("parent1");
  const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().slice(0, 10));
  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+ const [useCustomSplit, setUseCustomSplit] = useState(false);
+ const [customParent1Pct, setCustomParent1Pct] = useState(50);
+ const [customParent2Pct, setCustomParent2Pct] = useState(50);
 
  const [activeTab, setActiveTab] = useState<ExpensesTab>("expenses");
  const [isAddExpenseModalOpen, setIsAddExpenseModalOpen] = useState(false);
@@ -327,7 +341,7 @@ export default function ExpensesPage() {
   return () => clearTimeout(timeout);
  }, [toast]);
 
- const refreshExpenses = async (client = getSupabaseBrowserClient(), familyId = currentFamilyId) => {
+ const refreshExpenses = async (client = getSupabaseBrowserClient(), familyId = currentFamilyId, ratiosData = ratios) => {
   if (!familyId) {
    setExpenses([]);
    return;
@@ -366,22 +380,47 @@ export default function ExpensesPage() {
     statusText === "remboursée" ||
     statusText === "reimbursed";
 
-   const parent1ShareAmount = parseAmount(row.parent1_share_amount) ?? parseAmount(row.split_parent1);
-   const parent2ShareAmount = parseAmount(row.parent2_share_amount) ?? parseAmount(row.split_parent2);
+   const category = normalizeCategory(row.category ?? row.categorie);
+   const customSplit = row.custom_split ?? false;
+   const customParent1Pct = row.custom_parent1_pct ?? undefined;
+   const customParent2Pct = row.custom_parent2_pct ?? undefined;
+
+   let parent1ShareAmount = parseAmount(row.parent1_share_amount) ?? parseAmount(row.split_parent1);
+   let parent2ShareAmount = parseAmount(row.parent2_share_amount) ?? parseAmount(row.split_parent2);
+
+   if (!parent1ShareAmount || !parent2ShareAmount) {
+    let parent1Pct = 50;
+    let parent2Pct = 50;
+
+    if (customSplit && customParent1Pct !== undefined) {
+     parent1Pct = customParent1Pct;
+     parent2Pct = customParent2Pct ?? (100 - customParent1Pct);
+    } else if (category in ratiosData) {
+     const categoryRatios = ratiosData[category];
+     parent1Pct = categoryRatios.parent1Pct;
+     parent2Pct = categoryRatios.parent2Pct;
+    }
+
+    parent1ShareAmount = roundToTwo((parsedAmount * parent1Pct) / 100);
+    parent2ShareAmount = roundToTwo(parsedAmount - parent1ShareAmount);
+   }
 
    return {
     id: String(row.id),
     amount: parsedAmount,
     description: row.description ?? row.label ?? "Sans description",
-    category: normalizeCategory(row.category ?? row.categorie),
+    category,
     childId: row.child_id ?? row.enfant_id ?? null,
     childName: row.child_name ?? row.enfant ?? null,
     paidBy: normalizePaidBy(row.paid_by ?? row.payer ?? row.parent),
     expenseDate: rawDate,
     reimbursed,
     receiptUrl: row.recu_url ?? null,
-    parent1ShareAmount: parent1ShareAmount ?? roundToTwo(parsedAmount / 2),
-    parent2ShareAmount: parent2ShareAmount ?? roundToTwo(parsedAmount / 2),
+    parent1ShareAmount,
+    parent2ShareAmount,
+    customSplit,
+    customParent1Pct,
+    customParent2Pct,
    };
   });
 
@@ -507,8 +546,18 @@ export default function ExpensesPage() {
   }
 
   const parsedAmount = Number(amount.replace(",", "."));
-  const parent1ShareAmount = roundToTwo(parsedAmount / 2);
-  const parent2ShareAmount = roundToTwo(parsedAmount - parent1ShareAmount);
+
+  let parent1ShareAmount: number;
+  let parent2ShareAmount: number;
+
+  if (useCustomSplit) {
+   parent1ShareAmount = roundToTwo((parsedAmount * customParent1Pct) / 100);
+   parent2ShareAmount = roundToTwo(parsedAmount - parent1ShareAmount);
+  } else {
+   const categoryRatios = ratios[category];
+   parent1ShareAmount = roundToTwo((parsedAmount * categoryRatios.parent1Pct) / 100);
+   parent2ShareAmount = roundToTwo(parsedAmount - parent1ShareAmount);
+  }
 
   if (!user || !Number.isFinite(parsedAmount) || parsedAmount <= 0 || description.trim().length === 0 || !expenseDate) {
    setFormError("Tous les champs sont obligatoires et le montant doit être valide.");
@@ -556,6 +605,9 @@ export default function ExpensesPage() {
      recu_url: uploadedReceiptUrl,
      parent1_share_amount: parent1ShareAmount,
      parent2_share_amount: parent2ShareAmount,
+     custom_split: useCustomSplit,
+     custom_parent1_pct: useCustomSplit ? customParent1Pct : null,
+     custom_parent2_pct: useCustomSplit ? customParent2Pct : null,
      reimbursed: false,
      status: "unpaid",
     },
@@ -572,6 +624,9 @@ export default function ExpensesPage() {
      recu_url: uploadedReceiptUrl,
      parent1_share_amount: parent1ShareAmount,
      parent2_share_amount: parent2ShareAmount,
+     custom_split: useCustomSplit,
+     custom_parent1_pct: useCustomSplit ? customParent1Pct : null,
+     custom_parent2_pct: useCustomSplit ? customParent2Pct : null,
      reimbursed: false,
      status: "unpaid",
     },
@@ -588,6 +643,9 @@ export default function ExpensesPage() {
      recu_url: uploadedReceiptUrl,
      parent1_share_amount: parent1ShareAmount,
      parent2_share_amount: parent2ShareAmount,
+     custom_split: useCustomSplit,
+     custom_parent1_pct: useCustomSplit ? customParent1Pct : null,
+     custom_parent2_pct: useCustomSplit ? customParent2Pct : null,
      status: "En attente de remboursement",
     },
    ];
@@ -617,6 +675,9 @@ export default function ExpensesPage() {
    setPaidBy("parent1");
    setExpenseDate(new Date().toISOString().slice(0, 10));
    setReceiptFile(null);
+   setUseCustomSplit(false);
+   setCustomParent1Pct(50);
+   setCustomParent2Pct(50);
    setIsAddExpenseModalOpen(false);
    setToast({ message: "Dépense ajoutée.", variant: "success" });
   } catch (error) {
@@ -730,6 +791,28 @@ export default function ExpensesPage() {
    balanceNet,
   };
  }, [expenses]);
+
+ const previewSplit = useMemo(() => {
+  const parsedAmount = Number(amount.replace(",", ".")) || 0;
+
+  if (parsedAmount <= 0) {
+   return { parent1: 0, parent2: 0 };
+  }
+
+  let parent1Share: number;
+  let parent2Share: number;
+
+  if (useCustomSplit) {
+   parent1Share = roundToTwo((parsedAmount * customParent1Pct) / 100);
+   parent2Share = roundToTwo(parsedAmount - parent1Share);
+  } else {
+   const categoryRatios = ratios[category];
+   parent1Share = roundToTwo((parsedAmount * categoryRatios.parent1Pct) / 100);
+   parent2Share = roundToTwo(parsedAmount - parent1Share);
+  }
+
+  return { parent1: parent1Share, parent2: parent2Share };
+ }, [amount, category, useCustomSplit, customParent1Pct, ratios]);
 
  const balanceText = useMemo(() => {
   if (Math.abs(totals.balanceNet) < 0.005) {
@@ -894,15 +977,28 @@ export default function ExpensesPage() {
        <p className="mt-3 text-2xl font-semibold leading-tight text-[#3B2F27]">{balanceText}</p>
       </div>
 
-      <button
-       type="button"
-       onClick={() => setIsAddExpenseModalOpen(true)}
-       disabled={isReadOnly}
-       className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#7C6B5D] text-white shadow-[0_8px_20px_rgba(44,36,32,0.16)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-       aria-label="Ajouter une dépense"
-      >
-       <Plus size={20} />
-      </button>
+      <div className="flex gap-2">
+       <button
+        type="button"
+        onClick={() => setIsShareSettingsOpen(true)}
+        disabled={isReadOnly}
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#7C6B5D] text-white shadow-[0_8px_20px_rgba(44,36,32,0.16)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+        aria-label="Paramètres de partage"
+        title="Paramètres de partage"
+       >
+        <Settings size={20} />
+       </button>
+
+       <button
+        type="button"
+        onClick={() => setIsAddExpenseModalOpen(true)}
+        disabled={isReadOnly}
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#7C6B5D] text-white shadow-[0_8px_20px_rgba(44,36,32,0.16)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+        aria-label="Ajouter une dépense"
+       >
+        <Plus size={20} />
+       </button>
+      </div>
      </div>
 
      <section className="mt-4 rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] p-4">
@@ -995,6 +1091,9 @@ export default function ExpensesPage() {
                 <div className="min-w-0 flex-1">
                  <p className="truncate text-sm font-semibold text-[#2C2420]">{expense.description}</p>
                  <p className="mt-1 text-xs text-[#7B6E65]">{expenseDateText}</p>
+                 <p className="mt-1 text-xs font-medium text-[#5E5148]">
+                  Partage: {parentNames.parent1} → {formatCurrency(expense.parent1ShareAmount)}$ | {parentNames.parent2} → {formatCurrency(expense.parent2ShareAmount)}$
+                 </p>
                  {expense.receiptUrl && (
                   <a
                    href={expense.receiptUrl}
@@ -1220,7 +1319,12 @@ export default function ExpensesPage() {
             key={item}
             type="button"
             disabled={isReadOnly}
-            onClick={() => setCategory(item)}
+            onClick={() => {
+             setCategory(item);
+             setUseCustomSplit(false);
+             setCustomParent1Pct(ratios[item].parent1Pct);
+             setCustomParent2Pct(ratios[item].parent2Pct);
+            }}
             className={`rounded-xl border px-3 py-2 text-left transition ${
              isSelected
               ? "border-[#7C6B5D] bg-[#EFE7DF]"
@@ -1236,6 +1340,17 @@ export default function ExpensesPage() {
          })}
         </div>
        </div>
+
+       {amount && Number(amount) > 0 && (
+        <div className="rounded-xl border border-[#E3D9CE] bg-[#F2E9DE] p-3">
+         <p className="text-xs font-semibold text-[#6B5D55] mb-2">📊 PRÉVISION DU PARTAGE</p>
+         <p className="text-sm font-medium text-[#4E4036]">
+          {parentNames.parent1}: <span className="font-bold text-[#2C2420]">{formatCurrency(previewSplit.parent1)}$</span>
+          {" "} | {" "}
+          {parentNames.parent2}: <span className="font-bold text-[#2C2420]">{formatCurrency(previewSplit.parent2)}$</span>
+         </p>
+        </div>
+       )}
 
        <div>
         <label htmlFor="paidBy" className="mb-1 block text-sm font-medium text-[#5E5148]">
@@ -1289,6 +1404,59 @@ export default function ExpensesPage() {
         {receiptFile && <p className="mt-2 text-xs text-[#6B5D55]">Fichier: {receiptFile.name}</p>}
        </div>
 
+       <div>
+        <label className="mb-2 block text-sm font-medium text-[#5E5148]">
+         <div className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+           type="checkbox"
+           checked={useCustomSplit}
+           disabled={isReadOnly}
+           onChange={(e) => setUseCustomSplit(e.target.checked)}
+           className="w-4 h-4 accent-[#7C6B5D]"
+          />
+          <span>Modifier le partage pour cette dépense seulement</span>
+         </div>
+        </label>
+
+        {useCustomSplit && (
+         <div className="rounded-xl border border-[#E3D9CE] bg-[#F9F7F4] p-3 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+           <div>
+            <label className="text-xs font-semibold text-[#6B5D55] block mb-1">{parentNames.parent1}</label>
+            <div className="flex items-center gap-2">
+             <input
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value={customParent1Pct}
+              disabled={isReadOnly}
+              onChange={(e) => {
+               const newPct = Number(e.target.value);
+               setCustomParent1Pct(newPct);
+               setCustomParent2Pct(100 - newPct);
+              }}
+              className="flex-1 accent-[#7C6B5D]"
+             />
+             <span className="w-12 text-right font-semibold text-[#2C2420]">{customParent1Pct}%</span>
+            </div>
+           </div>
+
+           <div>
+            <label className="text-xs font-semibold text-[#6B5D55] block mb-1">{parentNames.parent2}</label>
+            <div className="flex items-center gap-2">
+             <span className="flex-1 text-right font-semibold text-[#2C2420]">{customParent2Pct}%</span>
+            </div>
+           </div>
+          </div>
+
+          <p className="text-xs text-[#6B5D55]">
+           💡 Ajustez le curseur pour {parentNames.parent1}, celui de {parentNames.parent2} s'ajuste automatiquement.
+          </p>
+         </div>
+        )}
+       </div>
+
        <button
         type="submit"
         disabled={isCreatingExpense || isReadOnly}
@@ -1312,6 +1480,14 @@ export default function ExpensesPage() {
      {toast.message}
     </div>
    )}
+
+   <ShareSettingsModal
+    isOpen={isShareSettingsOpen}
+    onClose={() => setIsShareSettingsOpen(false)}
+    onSave={saveRatios}
+    initialRatios={ratios}
+    parentNames={parentNames}
+   />
 
   </div>
  );
