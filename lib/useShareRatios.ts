@@ -82,23 +82,20 @@ export function useShareRatios(familyId: string | null) {
       for (const category of CATEGORIES) {
         const ratio = newRatios[category];
 
-        const { error: deleteError } = await supabase
+        // Utiliser l'UPSERT pour éviter les problèmes de RLS
+        const { error: upsertError } = await supabase
           .from("partage_regles")
-          .delete()
-          .eq("category", category);
+          .upsert(
+            {
+              category,
+              parent1_pct: ratio.parent1Pct,
+              parent2_pct: ratio.parent2Pct,
+            },
+            { onConflict: "category" }
+          );
 
-        if (deleteError && deleteError.code !== "PGRST116") {
-          throw deleteError;
-        }
-
-        const { error: insertError } = await supabase.from("partage_regles").insert({
-          category,
-          parent1_pct: ratio.parent1Pct,
-          parent2_pct: ratio.parent2Pct,
-        });
-
-        if (insertError) {
-          throw insertError;
+        if (upsertError) {
+          throw upsertError;
         }
       }
 
