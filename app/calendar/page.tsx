@@ -118,6 +118,8 @@ type CollecteConfig = {
  compostDay: number | null;
  reminderTime: string;
  assignmentMode: "parent1" | "parent2" | "alternate";
+ frequence: "weekly" | "biweekly" | "monthly";
+ semuinesAlternees: "A" | "B" | null;
 };
 
 type SupabaseJournalGardeRow = {
@@ -507,6 +509,8 @@ export default function CalendarPage() {
  const [collectesCompostDay, setCollectesCompostDay] = useState("5");
  const [collectesReminderTime, setCollectesReminderTime] = useState("20:00");
  const [collectesAssignmentMode, setCollectesAssignmentMode] = useState<"parent1" | "parent2" | "alternate">("alternate");
+ const [collectesFrequence, setCollectesFrequence] = useState<"weekly" | "biweekly" | "monthly">("weekly");
+ const [collectesSemuinesAlternees, setCollectesSemuinesAlternees] = useState<"A" | "B" | null>(null);
  const [isSavingCollectes, setIsSavingCollectes] = useState(false);
 
  const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
@@ -714,7 +718,7 @@ export default function CalendarPage() {
 
     const response = await client
     .from("collectes")
-    .select("family_id, garbage_day, recycling_day, compost_day, reminder_time, assignment_mode")
+    .select("family_id, garbage_day, recycling_day, compost_day, reminder_time, assignment_mode, frequence, semaines_alternees")
     .eq("family_id", familyId)
     .maybeSingle();
 
@@ -734,9 +738,53 @@ export default function CalendarPage() {
      row.assignment_mode === "parent1" || row.assignment_mode === "parent2" || row.assignment_mode === "alternate"
       ? row.assignment_mode
       : "alternate",
+    frequence:
+     row.frequence === "weekly" || row.frequence === "biweekly" || row.frequence === "monthly"
+      ? row.frequence
+      : "weekly",
+    semuinesAlternees:
+     row.semaines_alternees === "A" || row.semaines_alternees === "B"
+      ? row.semaines_alternees
+      : null,
     };
 
     setCollectesConfig(nextConfig);
+   };
+
+   const getISOWeekNumber = (date: Date): number => {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+   };
+
+   const shouldCollectOnDate = (
+    date: Date,
+    frequence: "weekly" | "biweekly" | "monthly",
+    semuinesAlternees: "A" | "B" | null,
+   ): boolean => {
+    if (frequence === "weekly") {
+     return true;
+    }
+
+    if (frequence === "biweekly") {
+     const weekNumber = getISOWeekNumber(date);
+     if (semuinesAlternees === "A") {
+      return weekNumber % 2 === 1;
+     }
+     if (semuinesAlternees === "B") {
+      return weekNumber % 2 === 0;
+     }
+     return true;
+    }
+
+    if (frequence === "monthly") {
+     const dayOfMonth = date.getDate();
+     return dayOfMonth >= 1 && dayOfMonth <= 7;
+    }
+
+    return true;
    };
 
    const resolveReminderParent = (targetDate: Date, mode: "parent1" | "parent2" | "alternate"): ParentRole => {
@@ -794,6 +842,11 @@ export default function CalendarPage() {
       continue;
      }
 
+     if (!shouldCollectOnDate(cursor, config.frequence, config.semuinesAlternees)) {
+      cursor.setDate(cursor.getDate() + 1);
+      continue;
+     }
+
      const reminderDate = new Date(cursor);
      reminderDate.setDate(reminderDate.getDate() - 1);
      reminderDate.setHours(reminderHour, reminderMinute, 0, 0);
@@ -801,6 +854,7 @@ export default function CalendarPage() {
      const reminderTitle = `⚠️ Sortir les ${definition.label} ce soir`;
      const key = `${toDateOnlyKey(reminderDate)}|${reminderTitle}`;
      if (existingSet.has(key)) {
+      cursor.setDate(cursor.getDate() + 1);
       continue;
      }
 
@@ -1138,6 +1192,8 @@ export default function CalendarPage() {
   setCollectesCompostDay(`${source?.compostDay ?? 5}`);
   setCollectesReminderTime(source?.reminderTime ?? "20:00");
   setCollectesAssignmentMode(source?.assignmentMode ?? "alternate");
+  setCollectesFrequence(source?.frequence ?? "weekly");
+  setCollectesSemuinesAlternees(source?.semuinesAlternees ?? null);
  };
 
  const closeCollectesForm = () => {
@@ -1164,6 +1220,8 @@ export default function CalendarPage() {
       compost_day: Number(collectesCompostDay),
       reminder_time: collectesReminderTime,
       assignment_mode: collectesAssignmentMode,
+      frequence: collectesFrequence,
+      semaines_alternees: collectesFrequence === "biweekly" ? collectesSemuinesAlternees : null,
       created_by: user.id,
       updated_at: new Date().toISOString(),
     };
@@ -3392,6 +3450,45 @@ export default function CalendarPage() {
         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
         />
        </div>
+
+       <div>
+        <label htmlFor="frequence" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+        Fréquence de collecte
+        </label>
+        <select
+        id="frequence"
+        value={collectesFrequence}
+        onChange={(event) => {
+         setCollectesFrequence(event.target.value as "weekly" | "biweekly" | "monthly");
+         if (event.target.value !== "biweekly") {
+          setCollectesSemuinesAlternees(null);
+         }
+        }}
+        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+        <option value="weekly">Chaque semaine</option>
+        <option value="biweekly">Aux 2 semaines (alternées)</option>
+        <option value="monthly">Aux 4 semaines</option>
+        </select>
+       </div>
+
+       {collectesFrequence === "biweekly" && (
+        <div>
+         <label htmlFor="semuinesAlternees" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+         Cette collecte a lieu quelle semaine ?
+         </label>
+         <select
+         id="semuinesAlternees"
+         value={collectesSemuinesAlternees || ""}
+         onChange={(event) => setCollectesSemuinesAlternees((event.target.value as "A" | "B") || null)}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+         >
+         <option value="">Sélectionner...</option>
+         <option value="A">Semaine A (semaines impaires)</option>
+         <option value="B">Semaine B (semaines paires)</option>
+         </select>
+        </div>
+       )}
 
        <div>
         <label htmlFor="assignmentMode" className="mb-1 block text-sm font-medium text-[#6B5D55]">
