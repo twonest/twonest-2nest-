@@ -13,7 +13,7 @@ create table if not exists public.tasks (
   priority text not null default 'normal' check (priority in ('high', 'normal', 'low')),
   due_date timestamptz,
   assigned_kind text not null default 'member' check (assigned_kind in ('member', 'child')),
-  assigned_user_id uuid references public.profiles(user_id) on delete set null,
+  assigned_user_id uuid references auth.users(id) on delete set null,
   assigned_child_id uuid references public.children(id) on delete set null,
   linked_child_id uuid references public.children(id) on delete set null,
   points integer default 0 check (points >= 0 and points <= 10),
@@ -24,7 +24,7 @@ create table if not exists public.tasks (
   proof_url text,
   proof_path text,
   completed_at timestamptz,
-  completed_by uuid references public.profiles(user_id) on delete set null,
+  completed_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
