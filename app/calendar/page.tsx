@@ -30,7 +30,16 @@ import AccessDeniedCard from "@/components/AccessDeniedCard";
 import { useFamily } from "@/components/FamilyProvider";
 import { getFeatureAccess } from "@/lib/family";
 
-type EventType = "Garde" | "Médecin" | "École" | "Activité";
+type EventType =
+ | "Garde"
+ | "Médecin"
+ | "École"
+ | "Activité"
+ | "Épicerie"
+ | "Poubelles/Recyclage"
+ | "Planification des repas"
+ | "Entretien maison"
+ | "Formulaire à signer";
 type ParentRole = "parent1" | "parent2";
 type SpecialDayType = "ferie" | "pedagogique" | "vacances" | "scolaire";
 
@@ -67,7 +76,39 @@ type CalendarSpecialDayEvent = {
  notes: string | null;
 };
 
-type CalendarDisplayEvent = CalendarEvent | CalendarSpecialDayEvent;
+type CalendarTaskEventStatus = "done" | "pending" | "late";
+
+type CalendarTaskEvent = {
+ id: string;
+ title: string;
+ start: Date;
+ end: Date;
+ allDay: true;
+ kind: "task";
+ taskStatus: CalendarTaskEventStatus;
+ taskTitle: string;
+ dueDateIso: string;
+};
+
+type CalendarDisplayEvent = CalendarEvent | CalendarSpecialDayEvent | CalendarTaskEvent;
+
+type TaskCalendarItem = {
+ id: string;
+ title: string;
+ dueDate: string;
+ category: string;
+ completedAt: string | null;
+ status: "todo" | "in_progress" | "done";
+};
+
+type CollecteConfig = {
+ familyId: string;
+ garbageDay: number | null;
+ recyclingDay: number | null;
+ compostDay: number | null;
+ reminderTime: string;
+ assignmentMode: "parent1" | "parent2" | "alternate";
+};
 
 type SupabaseJournalGardeRow = {
  id?: string | number;
@@ -130,7 +171,17 @@ type CustomDayRule = { enabled: boolean; parentRole: ParentRole };
 type CustomScheduleMap = Record<number, CustomDayRule>;
 
 const localizer = momentLocalizer(moment);
-const EVENT_TYPES: EventType[] = ["Garde", "Médecin", "École", "Activité"];
+const EVENT_TYPES: EventType[] = [
+ "Garde",
+ "Médecin",
+ "École",
+ "Activité",
+ "Épicerie",
+ "Poubelles/Recyclage",
+ "Planification des repas",
+ "Entretien maison",
+ "Formulaire à signer",
+];
 const WEEKDAY_OPTIONS: Array<{ jsDay: number; label: string }> = [
  { jsDay: 1, label: "Lundi" },
  { jsDay: 2, label: "Mardi" },
@@ -351,6 +402,8 @@ export default function CalendarPage() {
  const [configError, setConfigError] = useState("");
 
  const [events, setEvents] = useState<CalendarEvent[]>([]);
+ const [tasks, setTasks] = useState<TaskCalendarItem[]>([]);
+ const [collectesConfig, setCollectesConfig] = useState<CollecteConfig | null>(null);
  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
  const [journalEntries, setJournalEntries] = useState<JournalGardeEntry[]>([]);
  const [specialDays, setSpecialDays] = useState<SpecialDay[]>([]);
@@ -370,6 +423,7 @@ export default function CalendarPage() {
  const [journalOpen, setJournalOpen] = useState(false);
  const [journalEditOpen, setJournalEditOpen] = useState(false);
  const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
+ const [collectesFormOpen, setCollectesFormOpen] = useState(false);
 
  const [formError, setFormError] = useState("");
  const [editError, setEditError] = useState("");
@@ -377,6 +431,7 @@ export default function CalendarPage() {
  const [decisionError, setDecisionError] = useState("");
  const [journalEditError, setJournalEditError] = useState("");
  const [scheduleError, setScheduleError] = useState("");
+ const [collectesError, setCollectesError] = useState("");
  const [toast, setToast] = useState<ToastState | null>(null);
 
  const [title, setTitle] = useState("");
@@ -431,6 +486,12 @@ export default function CalendarPage() {
  const [agreementDate, setAgreementDate] = useState(() => formatForDateInput(new Date()));
  const [mediatorNotes, setMediatorNotes] = useState("");
  const [guardDateMenu, setGuardDateMenu] = useState<{ dateKey: string; eventId: string; x: number; y: number } | null>(null);
+ const [collectesGarbageDay, setCollectesGarbageDay] = useState("1");
+ const [collectesRecyclingDay, setCollectesRecyclingDay] = useState("3");
+ const [collectesCompostDay, setCollectesCompostDay] = useState("5");
+ const [collectesReminderTime, setCollectesReminderTime] = useState("20:00");
+ const [collectesAssignmentMode, setCollectesAssignmentMode] = useState<"parent1" | "parent2" | "alternate">("alternate");
+ const [isSavingCollectes, setIsSavingCollectes] = useState(false);
 
  const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
 
@@ -585,6 +646,172 @@ export default function CalendarPage() {
   }
  };
 
+   const refreshTasks = async (client = getSupabaseBrowserClient(), familyId?: string | null) => {
+    if (!familyId) {
+    setTasks([]);
+    return;
+    }
+
+    const response = await client
+    .from("tasks")
+    .select("id, title, due_date, category, completed_at, status")
+    .eq("family_id", familyId)
+    .not("due_date", "is", null);
+
+    if (response.error) {
+    setTasks([]);
+    return;
+    }
+
+    const mapped = ((response.data ?? []) as Array<Record<string, unknown>>)
+    .map((row): TaskCalendarItem | null => {
+     const id = row.id ? String(row.id) : "";
+     const titleValue = typeof row.title === "string" ? row.title.trim() : "";
+     const dueDateValue = typeof row.due_date === "string" ? row.due_date : "";
+     if (!id || !titleValue || !dueDateValue) {
+      return null;
+     }
+
+     const statusRaw = typeof row.status === "string" ? row.status : "todo";
+     const status: "todo" | "in_progress" | "done" =
+      statusRaw === "done" || statusRaw === "in_progress" ? statusRaw : "todo";
+
+     return {
+      id,
+      title: titleValue,
+      dueDate: dueDateValue,
+      category: typeof row.category === "string" ? row.category : "general",
+      completedAt: typeof row.completed_at === "string" ? row.completed_at : null,
+      status,
+     };
+    })
+    .filter((item): item is TaskCalendarItem => item !== null);
+
+    setTasks(mapped);
+   };
+
+   const refreshCollectes = async (client = getSupabaseBrowserClient(), familyId?: string | null) => {
+    if (!familyId) {
+    setCollectesConfig(null);
+    return;
+    }
+
+    const response = await client
+    .from("collectes")
+    .select("family_id, garbage_day, recycling_day, compost_day, reminder_time, assignment_mode")
+    .eq("family_id", familyId)
+    .maybeSingle();
+
+    if (response.error || !response.data) {
+    setCollectesConfig(null);
+    return;
+    }
+
+    const row = response.data as Record<string, unknown>;
+    const nextConfig: CollecteConfig = {
+    familyId,
+    garbageDay: typeof row.garbage_day === "number" ? row.garbage_day : null,
+    recyclingDay: typeof row.recycling_day === "number" ? row.recycling_day : null,
+    compostDay: typeof row.compost_day === "number" ? row.compost_day : null,
+    reminderTime: typeof row.reminder_time === "string" ? row.reminder_time.slice(0, 5) : "20:00",
+    assignmentMode:
+     row.assignment_mode === "parent1" || row.assignment_mode === "parent2" || row.assignment_mode === "alternate"
+      ? row.assignment_mode
+      : "alternate",
+    };
+
+    setCollectesConfig(nextConfig);
+   };
+
+   const resolveReminderParent = (targetDate: Date, mode: "parent1" | "parent2" | "alternate"): ParentRole => {
+    if (mode === "parent1" || mode === "parent2") {
+    return mode;
+    }
+
+    const weekIndex = Math.floor(toUtcDayMs(targetDate) / (7 * 24 * 60 * 60 * 1000));
+    return weekIndex % 2 === 0 ? "parent1" : "parent2";
+   };
+
+   const syncCollecteReminderEvents = async (
+    config: CollecteConfig,
+    client = getSupabaseBrowserClient(),
+    familyId?: string | null,
+   ) => {
+    if (!familyId || !user) {
+    return;
+    }
+
+    const targetFamilyId = familyId;
+    const startRange = new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1);
+    const endRange = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 2, 0);
+
+    const existingResponse = await client
+    .from("events")
+    .select("id, title, start_at")
+    .eq("family_id", targetFamilyId)
+    .eq("type", "Poubelles/Recyclage")
+    .gte("start_at", startRange.toISOString())
+    .lte("start_at", new Date(endRange.getFullYear(), endRange.getMonth(), endRange.getDate(), 23, 59, 59).toISOString());
+
+    const existingRows = ((existingResponse.data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const titleValue = typeof row.title === "string" ? row.title : "";
+    const startAtValue = typeof row.start_at === "string" ? row.start_at : "";
+    return `${toDateOnlyKey(new Date(startAtValue))}|${titleValue}`;
+    });
+
+    const existingSet = new Set(existingRows);
+    const inserts: Array<Record<string, unknown>> = [];
+    const dayByType: Array<{ day: number | null; label: string }> = [
+    { day: config.garbageDay, label: "ordures" },
+    { day: config.recyclingDay, label: "recyclage" },
+    { day: config.compostDay, label: "compost" },
+    ];
+
+    const [hourRaw, minuteRaw] = config.reminderTime.split(":");
+    const reminderHour = Number.isFinite(Number(hourRaw)) ? Number(hourRaw) : 20;
+    const reminderMinute = Number.isFinite(Number(minuteRaw)) ? Number(minuteRaw) : 0;
+
+    const cursor = new Date(startRange);
+    while (cursor <= endRange) {
+    for (const definition of dayByType) {
+     if (definition.day === null || cursor.getDay() !== definition.day) {
+      continue;
+     }
+
+     const reminderDate = new Date(cursor);
+     reminderDate.setDate(reminderDate.getDate() - 1);
+     reminderDate.setHours(reminderHour, reminderMinute, 0, 0);
+
+     const reminderTitle = `⚠️ Sortir les ${definition.label} ce soir`;
+     const key = `${toDateOnlyKey(reminderDate)}|${reminderTitle}`;
+     if (existingSet.has(key)) {
+      continue;
+     }
+
+     const reminderEnd = new Date(reminderDate);
+     reminderEnd.setMinutes(reminderEnd.getMinutes() + 30);
+
+     inserts.push({
+      family_id: targetFamilyId,
+      user_id: user.id,
+      title: reminderTitle,
+      type: "Poubelles/Recyclage",
+      parent: resolveReminderParent(cursor, config.assignmentMode),
+      start_at: reminderDate.toISOString(),
+      end_at: reminderEnd.toISOString(),
+     });
+    }
+
+    cursor.setDate(cursor.getDate() + 1);
+    }
+
+    if (inserts.length === 0) {
+    return;
+    }
+
+    await client.from("events").insert(inserts);
+   };
+
  const syncJournalForEvent = async (
   eventId: string,
   eventTypeValue: EventType,
@@ -718,9 +945,11 @@ export default function CalendarPage() {
 
    await Promise.all([
     refreshEvents(supabase, familyId),
+    refreshTasks(supabase, familyId),
     refreshSwapRequests(supabase),
     refreshJournalEntries(supabase),
     refreshSpecialDays(supabase, familyId),
+    refreshCollectes(supabase, familyId),
    ]);
    setIsLoadingEvents(false);
    setIsLoadingSwapRequests(false);
@@ -740,6 +969,32 @@ export default function CalendarPage() {
    subscription.unsubscribe();
   };
  }, [activeFamilyId, router]);
+
+   useEffect(() => {
+    if (!collectesConfig || !currentFamilyId || !user) {
+     return;
+    }
+
+    let cancelled = false;
+
+    const sync = async () => {
+     try {
+      const supabase = getSupabaseBrowserClient();
+      await syncCollecteReminderEvents(collectesConfig, supabase, currentFamilyId);
+      if (!cancelled) {
+       await refreshEvents(supabase, currentFamilyId);
+      }
+     } catch {
+      return;
+     }
+    };
+
+    void sync();
+
+    return () => {
+     cancelled = true;
+    };
+   }, [calendarDate, collectesConfig, currentFamilyId, user]);
 
  const calendarAccess = familyRole
   ? getFeatureAccess("calendar", familyRole, currentPermissions)
@@ -851,6 +1106,65 @@ export default function CalendarPage() {
  const closeScheduleForm = () => {
   setScheduleFormOpen(false);
   setScheduleError("");
+ };
+
+ const openCollectesForm = () => {
+  if (isReadOnly) {
+   return;
+  }
+
+  setCollectesError("");
+  setCollectesFormOpen(true);
+
+  const source = collectesConfig;
+  setCollectesGarbageDay(`${source?.garbageDay ?? 1}`);
+  setCollectesRecyclingDay(`${source?.recyclingDay ?? 3}`);
+  setCollectesCompostDay(`${source?.compostDay ?? 5}`);
+  setCollectesReminderTime(source?.reminderTime ?? "20:00");
+  setCollectesAssignmentMode(source?.assignmentMode ?? "alternate");
+ };
+
+ const closeCollectesForm = () => {
+  setCollectesFormOpen(false);
+  setCollectesError("");
+ };
+
+ const onSaveCollectes = async (event: FormEvent<HTMLFormElement>) => {
+  event.preventDefault();
+
+  if (!currentFamilyId || !user || isReadOnly) {
+   return;
+  }
+
+  setIsSavingCollectes(true);
+  setCollectesError("");
+
+  try {
+    const supabase = getSupabaseBrowserClient();
+    const payload = {
+      family_id: currentFamilyId,
+      garbage_day: Number(collectesGarbageDay),
+      recycling_day: Number(collectesRecyclingDay),
+      compost_day: Number(collectesCompostDay),
+      reminder_time: collectesReminderTime,
+      assignment_mode: collectesAssignmentMode,
+      created_by: user.id,
+      updated_at: new Date().toISOString(),
+    };
+
+    const result = await supabase.from("collectes").upsert(payload, { onConflict: "family_id" });
+    if (result.error) {
+      throw new Error(result.error.message);
+    }
+
+    await refreshCollectes(supabase, currentFamilyId);
+    setCollectesFormOpen(false);
+    setToast({ message: "Configuration des collectes enregistrée.", variant: "success" });
+  } catch (saveError) {
+    setCollectesError(saveError instanceof Error ? saveError.message : "Impossible d'enregistrer les collectes.");
+  } finally {
+    setIsSavingCollectes(false);
+  }
  };
 
  const openJournalEditForm = (entry: JournalGardeEntry) => {
@@ -1304,9 +1618,53 @@ export default function CalendarPage() {
   });
  }, [events, selectedChildFilterId, selectedChildFilterName]);
 
+   const taskCalendarEvents = useMemo<CalendarTaskEvent[]>(() => {
+    const now = new Date();
+
+    return tasks
+     .map((task): CalendarTaskEvent | null => {
+      const dueDate = new Date(task.dueDate);
+      if (Number.isNaN(dueDate.getTime())) {
+        return null;
+      }
+
+      const dayStart = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+
+      const status: CalendarTaskEventStatus =
+        task.completedAt || task.status === "done"
+          ? "done"
+          : dueDate.getTime() < now.getTime()
+            ? "late"
+            : "pending";
+
+      const prefix = status === "done" ? "✅" : status === "late" ? "❌" : "⏳";
+
+      return {
+        id: `task-${task.id}`,
+        title: `${prefix} ${task.title}`,
+        start: dayStart,
+        end: dayEnd,
+        allDay: true,
+        kind: "task",
+        taskStatus: status,
+        taskTitle: task.title,
+        dueDateIso: task.dueDate,
+      };
+     })
+     .filter((item): item is CalendarTaskEvent => item !== null);
+   }, [tasks]);
+
  const calendarDisplayEvents = useMemo<CalendarDisplayEvent[]>(() => {
-  return [...filteredEvents, ...calendarSpecialEvents];
- }, [calendarSpecialEvents, filteredEvents]);
+    return [...filteredEvents, ...calendarSpecialEvents, ...taskCalendarEvents];
+   }, [calendarSpecialEvents, filteredEvents, taskCalendarEvents]);
+
+   const todayTaskEvents = useMemo(() => {
+    const today = new Date();
+    const todayKey = toDateOnlyKey(today);
+    return taskCalendarEvents.filter((item) => toDateOnlyKey(item.start) === todayKey);
+   }, [taskCalendarEvents]);
 
  const monthDatePrefix = useMemo(
   () => `${calendarDate.getFullYear()}-${`${calendarDate.getMonth() + 1}`.padStart(2, "0")}`,
@@ -1360,6 +1718,40 @@ export default function CalendarPage() {
   () => detectedSchoolDates.filter((item) => selectedSchoolDateIds[item.id]).length,
   [detectedSchoolDates, selectedSchoolDateIds],
  );
+
+ const collecteIconsByDate = useMemo(() => {
+  const map = new Map<string, Array<{ icon: string; color: string }>>();
+  if (!collectesConfig) {
+   return map;
+  }
+
+  const monthStart = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1);
+  const monthEnd = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0);
+  const cursor = new Date(monthStart);
+
+  while (cursor <= monthEnd) {
+   const dateKey = toDateOnlyKey(cursor);
+   const iconList: Array<{ icon: string; color: string }> = [];
+
+   if (collectesConfig.garbageDay !== null && cursor.getDay() === collectesConfig.garbageDay) {
+    iconList.push({ icon: "🗑️", color: "#6F6F6F" });
+   }
+   if (collectesConfig.recyclingDay !== null && cursor.getDay() === collectesConfig.recyclingDay) {
+    iconList.push({ icon: "♻️", color: "#3D88CE" });
+   }
+   if (collectesConfig.compostDay !== null && cursor.getDay() === collectesConfig.compostDay) {
+    iconList.push({ icon: "🌱", color: "#4C9B5C" });
+   }
+
+   if (iconList.length > 0) {
+    map.set(dateKey, iconList);
+   }
+
+   cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return map;
+ }, [calendarDate, collectesConfig]);
 
  const getGuardEventForDate = (date: Date): CalendarEvent | null => {
   const selectedDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -1636,7 +2028,7 @@ export default function CalendarPage() {
    const { data: existingEventsData, error: existingEventsError } = await supabase
     .from("events")
     .select("id")
-    .eq("user_id", user.id)
+      .eq("family_id", currentFamilyId)
     .eq("type", "Garde")
     .eq("title", "Horaire de garde (auto)")
     .gte("start_at", startIso)
@@ -1663,6 +2055,7 @@ export default function CalendarPage() {
    const generatedEvents: Array<{
     title: string;
     type: EventType;
+      family_id: string | null;
     user_id: string;
     parent: ParentRole;
     start_at: string;
@@ -1681,6 +2074,7 @@ export default function CalendarPage() {
      generatedEvents.push({
       title: "Horaire de garde (auto)",
       type: "Garde",
+        family_id: currentFamilyId,
       user_id: user.id,
       parent: parentRole,
       start_at: dayStart.toISOString(),
@@ -2003,6 +2397,14 @@ export default function CalendarPage() {
        </button>
        <button
         type="button"
+        onClick={openCollectesForm}
+        disabled={isReadOnly}
+        className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3] disabled:cursor-not-allowed disabled:opacity-60"
+       >
+         🗑️ Collectes
+       </button>
+       <button
+        type="button"
         onClick={onExportCalendarPdf}
         className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
@@ -2105,6 +2507,24 @@ export default function CalendarPage() {
       <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm text-[#A85C52]">{formError}</p>
      )}
 
+    <div className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
+     <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">TÂCHES DU JOUR</p>
+     <div className="mt-2 space-y-2">
+      {todayTaskEvents.length === 0 ? (
+       <p className="text-sm text-[#6B5D55]">Aucune tâche prévue aujourd'hui.</p>
+      ) : (
+       todayTaskEvents.map((taskEvent) => (
+        <div key={taskEvent.id} className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm text-[#2C2420]">
+      <span className="font-semibold">
+       {taskEvent.taskStatus === "done" ? "✅ Fait" : taskEvent.taskStatus === "late" ? "❌ En retard" : "⏳ En attente"}
+      </span>
+      <span className="ml-2">{taskEvent.taskTitle}</span>
+        </div>
+       ))
+      )}
+     </div>
+    </div>
+
      <p className="mb-3 text-sm font-medium text-[#6B5D55]">Clique sur un événement pour le modifier ou le supprimer.</p>
 
      <div className="overflow-hidden rounded-2xl border border-[#D9D0C8] bg-white p-2 sm:p-4">
@@ -2124,11 +2544,17 @@ export default function CalendarPage() {
        titleAccessor={(event: CalendarDisplayEvent) =>
         event.kind === "special"
          ? event.title
-         : `${event.title} · ${event.type}`
+         : event.kind === "task"
+          ? `${event.title} · Tâche`
+          : `${event.title} · ${event.type}`
        }
        onSelectEvent={(event: CalendarDisplayEvent) => {
         setGuardDateMenu(null);
         if (event.kind === "special") {
+         return;
+        }
+        if (event.kind === "task") {
+         router.push("/tasks");
          return;
         }
         openEditForm(event);
@@ -2172,6 +2598,21 @@ export default function CalendarPage() {
           },
          };
         }
+        if (event.kind === "task") {
+         const backgroundColor =
+          event.taskStatus === "done" ? "#6B8F71" : event.taskStatus === "late" ? "#B0483E" : "#B3874F";
+
+         return {
+          style: {
+           backgroundColor,
+           borderRadius: "10px",
+           border: "none",
+           color: "#ffffff",
+           padding: "2px 6px",
+           fontWeight: 600,
+          },
+         };
+        }
         const isParentOne = event.parent
          ? normalizeParentRole(event.parent) === "parent1"
          : event.ownerUserId === user?.id;
@@ -2186,6 +2627,26 @@ export default function CalendarPage() {
          },
         };
        }}
+         components={{
+          dateCellWrapper: ({ children, value }) => {
+          const dayIcons = collecteIconsByDate.get(toDateOnlyKey(value));
+
+          return (
+           <div className="relative h-full">
+            {children}
+            {dayIcons && dayIcons.length > 0 ? (
+            <div className="pointer-events-none absolute bottom-0.5 right-0.5 flex items-center gap-0.5">
+             {dayIcons.map((item, index) => (
+              <span key={`${item.icon}-${index}`} className="text-[11px]" style={{ color: item.color }}>
+              {item.icon}
+              </span>
+             ))}
+            </div>
+            ) : null}
+           </div>
+          );
+          },
+         }}
        messages={{
         month: "Mois",
         week: "Semaine",
@@ -2684,6 +3145,122 @@ export default function CalendarPage() {
      </div>
     </div>
    )}
+
+    {collectesFormOpen && (
+     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+      <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+      <div className="mb-4 flex items-center justify-between">
+       <h2 className="text-xl font-semibold text-[#2C2420]">🗑️ Collectes</h2>
+       <button
+        type="button"
+        onClick={closeCollectesForm}
+        className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
+       >
+        <X size={14} />
+       </button>
+      </div>
+
+      {collectesError && (
+       <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm text-[#A85C52]">
+        {collectesError}
+       </p>
+      )}
+
+      <form className="space-y-4" onSubmit={onSaveCollectes}>
+       <div>
+        <label htmlFor="garbageDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+        Ordures ménagères : quel jour ?
+        </label>
+        <select
+        id="garbageDay"
+        value={collectesGarbageDay}
+        onChange={(event) => setCollectesGarbageDay(event.target.value)}
+        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+        {WEEKDAY_OPTIONS.map((day) => (
+         <option key={`garbage-${day.jsDay}`} value={day.jsDay}>
+          {day.label}
+         </option>
+        ))}
+        </select>
+       </div>
+
+       <div>
+        <label htmlFor="recyclingDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+        Recyclage : quel jour ?
+        </label>
+        <select
+        id="recyclingDay"
+        value={collectesRecyclingDay}
+        onChange={(event) => setCollectesRecyclingDay(event.target.value)}
+        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+        {WEEKDAY_OPTIONS.map((day) => (
+         <option key={`recycling-${day.jsDay}`} value={day.jsDay}>
+          {day.label}
+         </option>
+        ))}
+        </select>
+       </div>
+
+       <div>
+        <label htmlFor="compostDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+        Compost : quel jour ?
+        </label>
+        <select
+        id="compostDay"
+        value={collectesCompostDay}
+        onChange={(event) => setCollectesCompostDay(event.target.value)}
+        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+        {WEEKDAY_OPTIONS.map((day) => (
+         <option key={`compost-${day.jsDay}`} value={day.jsDay}>
+          {day.label}
+         </option>
+        ))}
+        </select>
+       </div>
+
+       <div>
+        <label htmlFor="reminderTime" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+        Heure du rappel
+        </label>
+        <input
+        id="reminderTime"
+        type="time"
+        value={collectesReminderTime}
+        onChange={(event) => setCollectesReminderTime(event.target.value)}
+        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        />
+       </div>
+
+       <div>
+        <label htmlFor="assignmentMode" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+        Attribution du rappel
+        </label>
+        <select
+        id="assignmentMode"
+        value={collectesAssignmentMode}
+        onChange={(event) => setCollectesAssignmentMode(event.target.value as "parent1" | "parent2" | "alternate")}
+        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+        <option value="alternate">Alternance</option>
+        <option value="parent1">Parent 1</option>
+        <option value="parent2">Parent 2</option>
+        </select>
+       </div>
+
+       <button
+        type="submit"
+        disabled={isSavingCollectes}
+        className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+       >
+        {isSavingCollectes ? "Sauvegarde..." : "Sauvegarder"}
+       </button>
+      </form>
+      </div>
+     </div>
+    )}
 
    {scheduleFormOpen && (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">

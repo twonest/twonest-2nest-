@@ -361,6 +361,8 @@ export default function TasksPage() {
 
   const [historyMemberFilter, setHistoryMemberFilter] = useState("all");
   const [historyMonthFilter, setHistoryMonthFilter] = useState("all");
+  const [distributionPeriod, setDistributionPeriod] = useState<"week" | "month" | "year">("week");
+  const [distributionCategory, setDistributionCategory] = useState<"all" | CategoryKey>("all");
 
   const [selectedPointsChildId, setSelectedPointsChildId] = useState("all");
   const [rewardLabel, setRewardLabel] = useState("");
@@ -813,6 +815,67 @@ export default function TasksPage() {
 
     return items.sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? ""));
   }, [historyMemberFilter, historyMonthFilter, tasks, user]);
+
+  const parentDistribution = useMemo(() => {
+    const parentMembers = members.filter((member) => member.role === "parent").slice(0, 2);
+    const now = new Date();
+
+    const rangeStart = new Date(now);
+    if (distributionPeriod === "week") {
+      const day = rangeStart.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      rangeStart.setDate(rangeStart.getDate() - diff);
+    } else if (distributionPeriod === "month") {
+      rangeStart.setDate(1);
+    } else {
+      rangeStart.setMonth(0, 1);
+    }
+    rangeStart.setHours(0, 0, 0, 0);
+
+    const filteredCompleted = tasks.filter((task) => {
+      if (!task.completedAt || !task.completedBy) {
+        return false;
+      }
+
+      if (distributionCategory !== "all" && task.category !== distributionCategory) {
+        return false;
+      }
+
+      const completedAt = new Date(task.completedAt);
+      if (Number.isNaN(completedAt.getTime())) {
+        return false;
+      }
+
+      return completedAt.getTime() >= rangeStart.getTime();
+    });
+
+    const cards = parentMembers.map((parent, index) => {
+      const parentTasks = filteredCompleted
+        .filter((task) => task.completedBy === parent.userId)
+        .sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? ""));
+
+      const fallbackLabel = index === 0 ? "Parent 1" : "Parent 2";
+      return {
+        userId: parent.userId,
+        label: fallbackLabel,
+        displayName: parent.displayName || fallbackLabel,
+        count: parentTasks.length,
+        tasks: parentTasks,
+      };
+    });
+
+    if (cards.length === 0) {
+      cards.push(
+        { userId: "", label: "Parent 1", displayName: "Parent 1", count: 0, tasks: [] },
+        { userId: "", label: "Parent 2", displayName: "Parent 2", count: 0, tasks: [] },
+      );
+    } else if (cards.length === 1) {
+      cards.push({ userId: "", label: "Parent 2", displayName: "Parent 2", count: 0, tasks: [] });
+    }
+
+    const maxCount = Math.max(...cards.map((card) => card.count), 1);
+    return { cards, maxCount };
+  }, [distributionCategory, distributionPeriod, members, tasks]);
 
   const kanbanGroups = useMemo(() => {
     const todo = scopedTasks.filter((task) => task.status === "todo");
@@ -1334,6 +1397,67 @@ export default function TasksPage() {
         </div>
 
         {listError ? <p className="mt-4 text-sm text-[#A85C52]">{listError}</p> : null}
+      </section>
+
+      <section className="rounded-2xl border border-[#DED2C7] bg-white p-4 shadow-[0_1px_4px_rgba(44,36,32,0.06)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-lg font-bold text-[#2C2420]">📊 Répartition cette semaine</h3>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={distributionPeriod}
+              onChange={(event) => setDistributionPeriod(event.target.value as "week" | "month" | "year")}
+              className="rounded-xl border border-[#D8CCC0] bg-white px-3 py-2 text-sm text-[#5E544B]"
+            >
+              <option value="week">Cette semaine</option>
+              <option value="month">Ce mois</option>
+              <option value="year">Cette année</option>
+            </select>
+
+            <select
+              value={distributionCategory}
+              onChange={(event) => setDistributionCategory(event.target.value as "all" | CategoryKey)}
+              className="rounded-xl border border-[#D8CCC0] bg-white px-3 py-2 text-sm text-[#5E544B]"
+            >
+              <option value="all">Toutes catégories</option>
+              {CATEGORIES.map((item) => (
+                <option key={`distribution-${item.key}`} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {parentDistribution.cards.map((card, index) => {
+            const barPercent = Math.round((card.count / parentDistribution.maxCount) * 100);
+            const accent = index === 0 ? "#7C6B5D" : "#6B8F71";
+
+            return (
+              <article key={`${card.label}-${card.userId || index}`} className="rounded-xl border border-[#E1D6CB] bg-[#F8F4EF] p-3">
+                <p className="text-xs font-semibold tracking-[0.14em] text-[#8A7D72]">{card.label}</p>
+                <p className="mt-1 text-base font-bold text-[#2C2420]">{card.displayName}</p>
+                <p className="mt-1 text-sm font-semibold text-[#4B423A]">
+                  {card.displayName} : {card.count} tâches ✅
+                </p>
+
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[#E2D8CD]">
+                  <div className="h-full rounded-full" style={{ width: `${barPercent}%`, backgroundColor: accent }} />
+                </div>
+
+                <ul className="mt-3 space-y-1 text-xs text-[#5F564F]">
+                  {card.tasks.length === 0 ? <li>Aucune tâche complétée sur cette période.</li> : null}
+                  {card.tasks.slice(0, 6).map((task) => (
+                    <li key={`distribution-task-${task.id}`} className="rounded-lg bg-white px-2 py-1">
+                      • {task.title}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            );
+          })}
+        </div>
       </section>
 
       {view === "list" ? (

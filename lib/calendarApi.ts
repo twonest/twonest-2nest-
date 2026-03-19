@@ -1,6 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-type EventType = "Garde" | "Médecin" | "École" | "Activité";
+type EventType =
+  | "Garde"
+  | "Médecin"
+  | "École"
+  | "Activité"
+  | "Épicerie"
+  | "Poubelles/Recyclage"
+  | "Planification des repas"
+  | "Entretien maison"
+  | "Formulaire à signer";
 type ParentRole = "parent1" | "parent2";
 type SpecialDayType = "ferie" | "pedagogique" | "vacances" | "scolaire";
 type SwapStatus = "en_attente" | "acceptee" | "refusee";

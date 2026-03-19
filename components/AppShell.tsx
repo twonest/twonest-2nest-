@@ -11,6 +11,7 @@ import {
  FileText,
  Home,
  MessageSquare,
+ ShoppingCart,
  UserCircle,
  Users,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const SHELL_ROUTES: ShellRoute[] = [
  { href: "/dashboard", label: "Tableau de bord", title: "Tableau de bord", icon: Home, feature: "dashboard" },
  { href: "/calendar", label: "Calendrier", title: "Calendrier", icon: CalendarIcon, feature: "calendar" },
  { href: "/messages", label: "Messages", title: "Messages", icon: MessageSquare, feature: "messages" },
+ { href: "/grocery", label: "Épicerie", title: "Liste d'épicerie", icon: ShoppingCart, feature: "grocery" },
  { href: "/tasks", label: "Tâches", title: "Tâches", icon: CheckSquare, feature: "tasks" },
  { href: "/expenses", label: "Dépenses", title: "Dépenses", icon: DollarSign, feature: "expenses" },
  { href: "/documents", label: "Documents", title: "Documents", icon: FileText, feature: "documents" },
@@ -64,6 +66,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
  const [selectorOpen, setSelectorOpen] = useState(false);
  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
+ const [groceryPendingCount, setGroceryPendingCount] = useState(0);
  const [overdueTasksCount, setOverdueTasksCount] = useState(0);
 
  const currentRoute = useMemo(() => {
@@ -199,6 +202,70 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   };
 
   void setupUnreadBadge();
+
+  return () => {
+   unsubscribed = true;
+   cleanupRealtime?.();
+  };
+ }, [activeFamilyId, pathname]);
+
+ useEffect(() => {
+  let unsubscribed = false;
+  let cleanupRealtime: (() => void) | null = null;
+
+  const setupGroceryBadge = async () => {
+   if (!activeFamilyId || !isShellRoute(pathname)) {
+    setGroceryPendingCount(0);
+    return;
+   }
+
+   try {
+    const supabase = getSupabaseBrowserClient();
+
+    const refreshPending = async () => {
+      const countQuery = await supabase
+       .from("grocery_items")
+       .select("id", { count: "exact", head: true })
+       .eq("family_id", activeFamilyId)
+       .eq("is_checked", false);
+
+      if (countQuery.error) {
+       setGroceryPendingCount(0);
+       return;
+      }
+
+      if (!unsubscribed) {
+       setGroceryPendingCount(countQuery.count ?? 0);
+      }
+    };
+
+    await refreshPending();
+
+    const channel = supabase
+     .channel(`sidebar-grocery-${activeFamilyId}`)
+     .on(
+      "postgres_changes",
+      {
+       event: "*",
+       schema: "public",
+       table: "grocery_items",
+       filter: `family_id=eq.${activeFamilyId}`,
+      },
+      async () => {
+       await refreshPending();
+      },
+     )
+     .subscribe();
+
+    cleanupRealtime = () => {
+      channel.unsubscribe();
+    };
+   } catch {
+    setGroceryPendingCount(0);
+   }
+  };
+
+  void setupGroceryBadge();
 
   return () => {
    unsubscribed = true;
@@ -380,6 +447,11 @@ function ShellContent({ children }: { children: React.ReactNode }) {
          {route.href === "/messages" && unreadMessagesCount > 0 && !pathname.startsWith("/messages") && (
           <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C93C3C] px-1.5 text-[10px] font-semibold text-white">
            {unreadMessagesCount > 99 ? "99+" : unreadMessagesCount}
+          </span>
+         )}
+         {route.href === "/grocery" && groceryPendingCount > 0 && !pathname.startsWith("/grocery") && (
+          <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C93C3C] px-1.5 text-[10px] font-semibold text-white">
+           {groceryPendingCount > 99 ? "99+" : groceryPendingCount}
           </span>
          )}
          {route.href === "/tasks" && overdueTasksCount > 0 && !pathname.startsWith("/tasks") && (

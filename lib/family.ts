@@ -28,6 +28,7 @@ export type FeatureKey =
  | "dashboard"
  | "calendar"
  | "messages"
+ | "grocery"
  | "tasks"
  | "expenses"
  | "documents"
@@ -101,6 +102,15 @@ const FAMILY_ROUTE_PERMISSIONS: Record<FeatureKey, (role: FamilyRole, permission
    return { allowed: true, readOnly: false, reason: "" };
   }
   return { allowed: false, readOnly: true, reason: "Les messages privés ne sont pas disponibles pour ce rôle." };
+ },
+ grocery: (role, permissions) => {
+  if (role === "parent") {
+   return { allowed: true, readOnly: false, reason: "" };
+  }
+  if ((role === "step_parent" || role === "mediator") && permissions.tasks) {
+   return { allowed: true, readOnly: role !== "step_parent", reason: "" };
+  }
+  return { allowed: false, readOnly: true, reason: "La liste d'épicerie n'est pas accessible avec ce rôle." };
  },
  tasks: (role, permissions) => {
   if (role === "parent") {
