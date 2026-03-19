@@ -1,82 +1,80 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
-import { ShoppingCart, Trash2 } from "lucide-react";
-import AccessDeniedCard from "@/components/AccessDeniedCard";
+import { Check, Trash2, Plus, ShoppingCart } from "lucide-react";
 import { useFamily } from "@/components/FamilyProvider";
 import { getFeatureAccess } from "@/lib/family";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
-
-type GroceryCategoryKey =
-  | "fruits_vegetables"
-  | "meats_fish"
-  | "dairy"
-  | "bakery"
-  | "household"
-  | "pharmacy"
-  | "other";
 
 type GroceryItem = {
   id: string;
   familyId: string;
   name: string;
   quantity: string | null;
-  category: GroceryCategoryKey;
   addedBy: string | null;
   addedByName: string | null;
   isChecked: boolean;
-  isRecurring: boolean;
   createdAt: string;
+  category: string;
 };
 
 type GroceryRow = Record<string, unknown>;
 
-type CategoryMeta = {
-  key: GroceryCategoryKey;
-  title: string;
+const CATEGORY_LABELS: Record<string, string> = {
+  fruits: "Fruits",
+  vegetables: "Légumes",
+  dairy: "Produits laitiers",
+  meat: "Viandes & Poissons",
+  breadpasta: "Pain & Pâtes",
+  frozen: "Surgelés",
+  condiments: "Condiments",
+  drinks: "Boissons",
+  other: "Autre",
 };
 
-const CATEGORIES: CategoryMeta[] = [
-  { key: "fruits_vegetables", title: "🥦 Fruits et légumes" },
-  { key: "meats_fish", title: "🥩 Viandes et poissons" },
-  { key: "dairy", title: "🥛 Produits laitiers" },
-  { key: "bakery", title: "🍞 Boulangerie" },
-  { key: "household", title: "🧴 Produits ménagers" },
-  { key: "pharmacy", title: "💊 Pharmacie" },
-  { key: "other", title: "📦 Autres" },
-];
-
-const CATEGORY_RULES: Array<{ category: GroceryCategoryKey; keywords: string[] }> = [
-  { category: "dairy", keywords: ["lait", "yaourt", "yogourt", "fromage", "beurre", "creme", "oeuf", "oeufs"] },
-  { category: "fruits_vegetables", keywords: ["pomme", "pommes", "banane", "bananes", "carotte", "legume", "fruit", "salade", "tomate"] },
-  { category: "household", keywords: ["savon", "detergent", "papier", "essuie", "nettoyant", "javel", "sac poubelle"] },
-  { category: "pharmacy", keywords: ["ibuprofene", "acetaminophene", "vitamine", "pansement", "sirop", "medicament"] },
-  { category: "meats_fish", keywords: ["poulet", "boeuf", "porc", "saumon", "thon", "viande", "poisson"] },
-  { category: "bakery", keywords: ["pain", "bagel", "croissant", "brioche", "muffin"] },
-];
+const CATEGORY_COLORS: Record<string, string> = {
+  fruits: "#E85D4B",
+  vegetables: "#8DC149",
+  dairy: "#A89080",
+  meat: "#C87A5B",
+  breadpasta: "#D4A574",
+  frozen: "#4BA3D0",
+  condiments: "#9B8B7E",
+  drinks: "#7B9DC9",
+  other: "#7C6B5D",
+};
 
 function safeText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function normalizeCategory(value: unknown): GroceryCategoryKey {
-  const normalized = safeText(value).toLowerCase();
-  for (const category of CATEGORIES) {
-    if (category.key === normalized) {
-      return category.key;
-    }
+function getCategoryFromName(itemName: string): string {
+  const name = itemName.toLowerCase();
+  if (name.match(/apple|banana|orange|strawberry|berry|grape|pear|melon|fruit|abricot|mandarine|citron/)) {
+    return "fruits";
   }
-  return "other";
-}
-
-function detectCategory(itemName: string): GroceryCategoryKey {
-  const normalized = itemName.trim().toLowerCase();
-  for (const rule of CATEGORY_RULES) {
-    if (rule.keywords.some((keyword) => normalized.includes(keyword))) {
-      return rule.category;
-    }
+  if (name.match(/carrot|broccoli|lettuce|tomato|spinach|pepper|onion|vegetable|carotte|tomate|épinard|courge|radis/)) {
+    return "vegetables";
+  }
+  if (name.match(/milk|cheese|yogurt|butter|cream|dairy|lait|fromage|yaourt|beurre/)) {
+    return "dairy";
+  }
+  if (name.match(/chicken|beef|pork|fish|meat|salmon|poulet|boeuf|porc|poisson|côte|steak/)) {
+    return "meat";
+  }
+  if (name.match(/bread|pasta|rice|noodle|cereal|grain|pain|pâtes|riz|nouilles|céréale/)) {
+    return "breadpasta";
+  }
+  if (name.match(/frozen|ice|popsicle|surgelé|glaçon/)) {
+    return "frozen";
+  }
+  if (name.match(/sauce|oil|vinegar|spice|salt|condiment|sauce|huile|vinaigre|épice|sel/)) {
+    return "condiments";
+  }
+  if (name.match(/juice|soda|water|coffee|tea|drink|jus|soda|eau|café|thé|boisson/)) {
+    return "drinks";
   }
   return "other";
 }
@@ -84,17 +82,16 @@ function detectCategory(itemName: string): GroceryCategoryKey {
 export default function GroceryPage() {
   const router = useRouter();
   const { activeFamilyId, currentRole, currentPermissions } = useFamily();
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const [user, setUser] = useState<User | null>(null);
   const [displayName, setDisplayName] = useState("Parent");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [items, setItems] = useState<GroceryItem[]>([]);
-
   const [inputName, setInputName] = useState("");
   const [inputQuantity, setInputQuantity] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-  const [isClearingChecked, setIsClearingChecked] = useState(false);
 
   const groceryAccess = currentRole
     ? getFeatureAccess("grocery", currentRole, currentPermissions)
@@ -106,6 +103,7 @@ export default function GroceryPage() {
       .from("grocery_items")
       .select("*")
       .eq("family_id", familyId)
+      .eq("is_checked", false)
       .order("created_at", { ascending: false });
 
     if (response.error) {
@@ -128,12 +126,11 @@ export default function GroceryPage() {
           familyId: familyIdValue,
           name,
           quantity: safeText(row.quantity).trim() || null,
-          category: normalizeCategory(row.category),
           addedBy: safeText(row.added_by) || null,
           addedByName: safeText(row.added_by_name) || null,
           isChecked: Boolean(row.is_checked),
-          isRecurring: Boolean(row.is_recurring),
           createdAt: safeText(row.created_at) || new Date().toISOString(),
+          category: safeText(row.category) || "other",
         };
       })
       .filter((item): item is GroceryItem => item !== null);
@@ -214,35 +211,6 @@ export default function GroceryPage() {
     };
   }, [activeFamilyId, router]);
 
-  const groupedItems = useMemo(() => {
-    const groups: Record<GroceryCategoryKey, GroceryItem[]> = {
-      fruits_vegetables: [],
-      meats_fish: [],
-      dairy: [],
-      bakery: [],
-      household: [],
-      pharmacy: [],
-      other: [],
-    };
-
-    for (const item of items) {
-      groups[item.category].push(item);
-    }
-
-    for (const key of Object.keys(groups) as GroceryCategoryKey[]) {
-      groups[key].sort((a, b) => {
-        if (a.isChecked !== b.isChecked) {
-          return a.isChecked ? 1 : -1;
-        }
-        return b.createdAt.localeCompare(a.createdAt);
-      });
-    }
-
-    return groups;
-  }, [items]);
-
-  const checkedCount = useMemo(() => items.filter((item) => item.isChecked).length, [items]);
-
   const onAddItem = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -259,7 +227,8 @@ export default function GroceryPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const category = detectCategory(name);
+      const category = getCategoryFromName(name);
+      
       const response = await supabase.from("grocery_items").insert({
         family_id: activeFamilyId,
         name,
@@ -276,22 +245,11 @@ export default function GroceryPage() {
       setInputName("");
       setInputQuantity("");
       await refreshItems(activeFamilyId);
+      inputRef.current?.focus();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Impossible d'ajouter cet item.");
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const updateItem = async (itemId: string, patch: Record<string, unknown>) => {
-    const supabase = getSupabaseBrowserClient();
-    const response = await supabase
-      .from("grocery_items")
-      .update({ ...patch, updated_at: new Date().toISOString() })
-      .eq("id", itemId);
-
-    if (response.error) {
-      throw new Error(response.error.message);
     }
   };
 
@@ -301,203 +259,216 @@ export default function GroceryPage() {
     }
 
     try {
-      await updateItem(item.id, {
-        is_checked: checked,
-        checked_at: checked ? new Date().toISOString() : null,
-      });
+      const supabase = getSupabaseBrowserClient();
+      if (checked) {
+        await supabase.from("grocery_items").update({ is_checked: true, checked_at: new Date().toISOString() }).eq("id", item.id);
+      } else {
+        await supabase.from("grocery_items").delete().eq("id", item.id);
+      }
       await refreshItems(activeFamilyId);
     } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : "Impossible de mettre à jour cet item.");
+      setError(toggleError instanceof Error ? toggleError.message : "Impossible de mettre à jour l'item.");
     }
   };
 
-  const onToggleRecurring = async (item: GroceryItem, recurring: boolean) => {
+  const onDeleteItem = async (itemId: string) => {
     if (!activeFamilyId || groceryAccess.readOnly) {
       return;
     }
 
     try {
-      await updateItem(item.id, { is_recurring: recurring });
+      const supabase = getSupabaseBrowserClient();
+      await supabase.from("grocery_items").delete().eq("id", itemId);
       await refreshItems(activeFamilyId);
-    } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : "Impossible de mettre à jour la récurrence.");
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Impossible de supprimer l'item.");
     }
   };
 
-  const onClearChecked = async () => {
-    if (!activeFamilyId || groceryAccess.readOnly || checkedCount === 0) {
+  const onClearAll = async () => {
+    if (!activeFamilyId || groceryAccess.readOnly) {
       return;
     }
 
-    setIsClearingChecked(true);
+    if (!window.confirm("Êtes-vous sûr de vouloir vider toute la liste ?")) {
+      return;
+    }
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const checkedItems = items.filter((item) => item.isChecked);
-      const recurringIds = checkedItems.filter((item) => item.isRecurring).map((item) => item.id);
-      const nonRecurringIds = checkedItems.filter((item) => !item.isRecurring).map((item) => item.id);
-
-      if (recurringIds.length > 0) {
-        const recurringResult = await supabase
-          .from("grocery_items")
-          .update({ is_checked: false, checked_at: null, updated_at: new Date().toISOString() })
-          .in("id", recurringIds);
-
-        if (recurringResult.error) {
-          throw new Error(recurringResult.error.message);
-        }
-      }
-
-      if (nonRecurringIds.length > 0) {
-        const deleteResult = await supabase
-          .from("grocery_items")
-          .delete()
-          .in("id", nonRecurringIds);
-
-        if (deleteResult.error) {
-          throw new Error(deleteResult.error.message);
-        }
-      }
-
+      await supabase.from("grocery_items").delete().eq("family_id", activeFamilyId).eq("is_checked", false);
       await refreshItems(activeFamilyId);
-    } catch (clearError) {
-      setError(clearError instanceof Error ? clearError.message : "Impossible de vider les items cochés.");
-    } finally {
-      setIsClearingChecked(false);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Impossible de vider la liste.");
     }
   };
 
+  // Group items by category
+  const groupedItems = items.reduce(
+    (acc, item) => {
+      if (!acc[item.category]) {
+        acc[item.category] = [];
+      }
+      acc[item.category].push(item);
+      return acc;
+    },
+    {} as Record<string, GroceryItem[]>,
+  );
+
+  const sortedCategories = Object.keys(groupedItems).sort(
+    (a, b) => Object.keys(CATEGORY_LABELS).indexOf(a) - Object.keys(CATEGORY_LABELS).indexOf(b),
+  );
+
+  const itemCount = items.length;
+
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center rounded-2xl border border-[#E2D8CF] bg-white px-6">
-        <p className="text-sm font-medium text-[#6B5D55]">Chargement de la liste d'épicerie...</p>
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F0EB] px-6">
+        <p className="text-sm font-medium text-[#6B5D55]">Chargement de votre épicerie...</p>
       </div>
     );
   }
 
-  if (currentRole && !groceryAccess.allowed) {
-    return <AccessDeniedCard title="Liste d'épicerie" message={groceryAccess.reason} />;
-  }
-
   return (
-    <div className="space-y-5">
-      <section className="rounded-3xl border border-[#DED2C7] bg-white p-4 shadow-[0_2px_10px_rgba(44,36,32,0.06)] sm:p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#E9E0D6] text-[#6E6053]">
-              <ShoppingCart size={20} />
-            </span>
-            <div>
-              <h2 className="text-2xl font-bold text-[#2C2420]">Liste d'épicerie partagée</h2>
-              <p className="text-xs text-[#7B6D62]">Temps réel entre co-parents</p>
+    <div className="relative min-h-screen bg-[#F5F0EB] pb-32">
+      {/* Header */}
+      <div className="sticky top-0 z-40 border-b border-[#E1D6CB] bg-white/95 backdrop-blur-sm">
+        <div className="mx-auto max-w-3xl px-6 py-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#7C6B5D]/10">
+                <ShoppingCart size={20} className="text-[#7C6B5D]" />
+              </div>
+              <div>
+                <h1 className="text-xl font-semibold text-[#2C2420]">Épicerie</h1>
+                <p className="text-xs text-[#A89080]">
+                  {itemCount === 0 ? "Liste vide" : `${itemCount} ${itemCount === 1 ? "item" : "items"} à acheter`}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {itemCount > 0 && !groceryAccess.readOnly && (
+                <button
+                  onClick={onClearAll}
+                  className="flex items-center gap-2 rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-xs font-semibold text-[#6B5D55] transition hover:bg-[#F9F7F3]"
+                >
+                  <Trash2 size={14} />
+                  Vider
+                </button>
+              )}
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={onClearChecked}
-            disabled={groceryAccess.readOnly || checkedCount === 0 || isClearingChecked}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#D7CCC1] bg-white px-4 text-sm font-semibold text-[#5E544B] transition hover:bg-[#F5F0EB] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Trash2 size={16} />
-            Vider les items cochés
-          </button>
         </div>
+      </div>
 
-        <form onSubmit={onAddItem} className="mt-4 grid gap-2 sm:grid-cols-[1fr_120px_auto]">
-          <input
-            value={inputName}
-            onChange={(event) => setInputName(event.target.value)}
-            placeholder="Ajouter un item..."
-            disabled={groceryAccess.readOnly || isSaving}
-            className="rounded-xl border border-[#D8CCC0] bg-white px-3 py-2 text-sm text-[#403831]"
-          />
-          <input
-            value={inputQuantity}
-            onChange={(event) => setInputQuantity(event.target.value)}
-            placeholder="Quantité"
-            disabled={groceryAccess.readOnly || isSaving}
-            className="rounded-xl border border-[#D8CCC0] bg-white px-3 py-2 text-sm text-[#403831]"
-          />
-          <button
-            type="submit"
-            disabled={groceryAccess.readOnly || isSaving || inputName.trim().length === 0}
-            className="rounded-xl bg-[#7C6B5D] px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Ajouter
-          </button>
-        </form>
+      {/* Main Content */}
+      <main className="mx-auto max-w-3xl px-6 py-8">
+        {error && (
+          <div className="mb-6 rounded-xl border border-[#E6C8BD] bg-[#FBEFEB] px-4 py-3 text-sm text-[#A85C52]">
+            {error}
+          </div>
+        )}
 
-        {error ? (
-          <p className="mt-3 rounded-xl border border-[#E6C8BD] bg-[#FBEFEB] px-3 py-2 text-sm text-[#A85C52]">{error}</p>
-        ) : null}
-      </section>
+        {items.length === 0 ? (
+          <div className="rounded-2xl border border-[#D9D0C8] bg-white p-12 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#F5F0EB]">
+                <ShoppingCart size={32} className="text-[#A89080]" />
+              </div>
+            </div>
+            <p className="text-lg font-semibold text-[#2C2420]">Liste vide</p>
+            <p className="mt-1 text-sm text-[#6B5D55]">Ajoute les articles que vous devez acheter</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {sortedCategories.map((category) => (
+              <div key={category} className="rounded-2xl border border-[#D9D0C8] bg-white overflow-hidden">
+                {/* Category Header */}
+                <div className="border-b border-[#E1D6CB] bg-[#F9F7F3] px-6 py-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="flex h-8 w-8 items-center justify-center rounded-full"
+                        style={{ backgroundColor: `${CATEGORY_COLORS[category]}20` }}
+                      >
+                        <span className="text-base" style={{ color: CATEGORY_COLORS[category] }}>
+                          ●
+                        </span>
+                      </div>
+                      <h2 className="font-semibold text-[#2C2420]">{CATEGORY_LABELS[category]}</h2>
+                    </div>
+                    <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-medium text-[#6B5D55] border border-[#D9D0C8]">
+                      {groupedItems[category].length}
+                    </span>
+                  </div>
+                </div>
 
-      <section className="space-y-4">
-        {CATEGORIES.map((category) => {
-          const categoryItems = groupedItems[category.key];
-
-          return (
-            <article key={category.key} className="rounded-2xl border border-[#DED2C7] bg-white p-4">
-              <h3 className="text-sm font-bold tracking-wide text-[#433A32]">{category.title}</h3>
-
-              {categoryItems.length === 0 ? (
-                <p className="mt-3 text-sm text-[#7B6D62]">Aucun item.</p>
-              ) : (
-                <div className="mt-3 space-y-2">
-                  {categoryItems.map((item) => (
+                {/* Items */}
+                <div className="divide-y divide-[#E1D6CB]">
+                  {groupedItems[category].map((item, index) => (
                     <div
                       key={item.id}
-                      className={`rounded-xl border px-3 py-2 ${item.isChecked ? "border-[#E0D7CF] bg-[#F5F0EB]" : "border-[#E1D6CB] bg-white"}`}
+                      className="group flex items-center gap-4 px-6 py-4 transition hover:bg-[#F9F7F3]"
                     >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onToggleItem(item, !item.isChecked)}
-                          disabled={groceryAccess.readOnly}
-                          aria-label={item.isChecked ? "Décocher" : "Cocher"}
-                          className={`h-6 w-6 rounded-full border-2 transition ${
-                            item.isChecked
-                              ? "border-[#6B8F71] bg-[#6B8F71]"
-                              : "border-[#B9ACA0] bg-white hover:border-[#7C6B5D]"
-                          }`}
-                        >
-                          <span className="block text-center text-[12px] font-bold text-white">{item.isChecked ? "✓" : ""}</span>
-                        </button>
+                      {/* Checkbox */}
+                      <button
+                        onClick={() => onToggleItem(item, true)}
+                        disabled={groceryAccess.readOnly}
+                        className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border-2 border-[#D9D0C8] bg-white transition hover:border-[#7C6B5D] hover:bg-[#7C6B5D]/5 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Cocher l'item"
+                      >
+                        <Check size={14} className="text-transparent group-hover:text-[#7C6B5D]" />
+                      </button>
 
-                        <p className={`text-sm font-semibold ${item.isChecked ? "text-[#9D9187 line-through" : "text-[#2C2420]"}`}>
-                          {item.name}
-                        </p>
-
-                        {item.quantity ? (
-                          <span className="rounded-full bg-[#EFE8E0] px-2 py-0.5 text-xs font-semibold text-[#5D534A]">
-                            {item.quantity}
-                          </span>
-                        ) : null}
-
-                        <span className="rounded-full bg-[#F4EEE7] px-2 py-0.5 text-xs text-[#6D6258]">
-                          Ajouté par {item.addedByName || "Parent"}
-                        </span>
-
-                        <label className="ml-auto inline-flex items-center gap-2 text-xs font-semibold text-[#6D6258]">
-                          Récurrent
-                          <input
-                            type="checkbox"
-                            checked={item.isRecurring}
-                            disabled={groceryAccess.readOnly}
-                            onChange={(event) => onToggleRecurring(item, event.target.checked)}
-                            className="h-4 w-4"
-                          />
-                        </label>
+                      {/* Item Content */}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-[#2C2420]">{item.name}</p>
+                        {item.quantity && (
+                          <p className="mt-1 text-sm text-[#A89080]">{item.quantity}</p>
+                        )}
                       </div>
+
+                      {/* Delete Button */}
+                      <button
+                        onClick={() => onDeleteItem(item.id)}
+                        disabled={groceryAccess.readOnly}
+                        className="flex-shrink-0 text-[#D9D0C8] transition hover:text-[#A85C52] group-hover:opacity-100 opacity-0 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Supprimer"
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </div>
                   ))}
                 </div>
-              )}
-            </article>
-          );
-        })}
-      </section>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+
+      {/* Fixed Bottom Bar */}
+      {!groceryAccess.readOnly && (
+        <div className="fixed bottom-0 left-0 right-0 border-t border-[#D9D0C8] bg-white/95 backdrop-blur-sm shadow-lg shadow-black/5">
+          <form onSubmit={onAddItem} className="mx-auto max-w-3xl px-6 py-4 flex items-center gap-3">
+            <input
+              ref={inputRef}
+              value={inputName}
+              onChange={(e) => setInputName(e.target.value)}
+              placeholder="Ajouter un item..."
+              disabled={isSaving}
+              className="flex-1 rounded-full border border-[#D9D0C8] bg-[#F9F7F3] px-5 py-3 text-sm text-[#2C2420] outline-none transition focus:border-[#7C6B5D] focus:ring-2 focus:ring-[#7C6B5D]/20 placeholder:text-[#A89080] disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={isSaving || !inputName.trim()}
+              className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-[#7C6B5D] text-white transition hover:bg-[#6E5F51] disabled:cursor-not-allowed disabled:opacity-50"
+              title="Envoyer"
+            >
+              <Plus size={20} />
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
