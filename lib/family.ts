@@ -19,6 +19,7 @@ export type ChildPermissionKey =
 export type FamilyPermissionKey =
  | ChildPermissionKey
  | "messages"
+ | "tasks"
  | "invite_members"
  | "space_settings"
  | "custody_journal";
@@ -27,6 +28,7 @@ export type FeatureKey =
  | "dashboard"
  | "calendar"
  | "messages"
+ | "tasks"
  | "expenses"
  | "documents"
  | "children"
@@ -95,10 +97,19 @@ const FAMILY_ROUTE_PERMISSIONS: Record<FeatureKey, (role: FamilyRole, permission
   if (role === "parent") {
    return { allowed: true, readOnly: false, reason: "" };
   }
-  if (role === "step_parent" && permissions.messages) {
+  if ((role === "step_parent" || role === "mediator") && permissions.messages) {
    return { allowed: true, readOnly: false, reason: "" };
   }
   return { allowed: false, readOnly: true, reason: "Les messages privés ne sont pas disponibles pour ce rôle." };
+ },
+ tasks: (role, permissions) => {
+  if (role === "parent") {
+   return { allowed: true, readOnly: false, reason: "" };
+  }
+  if ((role === "step_parent" || role === "mediator") && permissions.tasks) {
+   return { allowed: true, readOnly: role !== "step_parent", reason: "" };
+  }
+  return { allowed: false, readOnly: true, reason: "Les tâches de cet espace ne sont pas accessibles avec ce rôle." };
  },
  expenses: (role, permissions) => {
   if (role === "parent") {
@@ -179,6 +190,7 @@ export function getDefaultFamilyPermissions(role: FamilyRole): FamilyPermissionS
    legal_documents: true,
    expenses: true,
    messages: true,
+  tasks: true,
    invite_members: true,
    space_settings: true,
    custody_journal: true,
@@ -194,6 +206,7 @@ export function getDefaultFamilyPermissions(role: FamilyRole): FamilyPermissionS
    legal_documents: false,
    expenses: false,
    messages: false,
+  tasks: false,
    invite_members: false,
    space_settings: false,
    custody_journal: false,
@@ -209,6 +222,7 @@ export function getDefaultFamilyPermissions(role: FamilyRole): FamilyPermissionS
    legal_documents: false,
    expenses: false,
    messages: false,
+  tasks: false,
    invite_members: false,
    space_settings: false,
    custody_journal: false,
@@ -223,6 +237,7 @@ export function getDefaultFamilyPermissions(role: FamilyRole): FamilyPermissionS
   legal_documents: true,
   expenses: true,
   messages: false,
+  tasks: false,
   invite_members: false,
   space_settings: false,
   custody_journal: true,

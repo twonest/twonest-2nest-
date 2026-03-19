@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
-import { CalendarIcon, DollarSign, FileText, MessageSquare, UserCircle, Users } from "lucide-react";
+import { CalendarIcon, CheckSquare, DollarSign, FileText, MessageSquare, UserCircle, Users } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { useFamily } from "@/components/FamilyProvider";
 import { getFeatureAccess, type FeatureKey } from "@/lib/family";
@@ -28,6 +28,7 @@ const JOINED_FAMILY_NAME_KEY = "twonest.joinedFamilyName";
 const ACTIONS: DashboardAction[] = [
  { label: "Calendrier", href: "/calendar", icon: CalendarIcon, feature: "calendar" },
  { label: "Messages", href: "/messages", icon: MessageSquare, feature: "messages" },
+ { label: "Taches", href: "/tasks", icon: CheckSquare, feature: "tasks" },
  { label: "Dépenses", href: "/expenses", icon: DollarSign, feature: "expenses" },
  { label: "Documents", href: "/documents", icon: FileText, feature: "documents" },
  { label: "Enfants", href: "/children", icon: Users, feature: "children" },

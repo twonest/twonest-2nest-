@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
  CalendarIcon,
+ CheckSquare,
  ChevronDown,
  DollarSign,
  FileText,
@@ -31,6 +32,7 @@ const SHELL_ROUTES: ShellRoute[] = [
  { href: "/dashboard", label: "Tableau de bord", title: "Tableau de bord", icon: Home, feature: "dashboard" },
  { href: "/calendar", label: "Calendrier", title: "Calendrier", icon: CalendarIcon, feature: "calendar" },
  { href: "/messages", label: "Messages", title: "Messages", icon: MessageSquare, feature: "messages" },
+ { href: "/tasks", label: "Tâches", title: "Tâches", icon: CheckSquare, feature: "tasks" },
  { href: "/expenses", label: "Dépenses", title: "Dépenses", icon: DollarSign, feature: "expenses" },
  { href: "/documents", label: "Documents", title: "Documents", icon: FileText, feature: "documents" },
  { href: "/children", label: "Enfants", title: "Enfants", icon: Users, feature: "children" },
@@ -62,6 +64,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
  const [selectorOpen, setSelectorOpen] = useState(false);
  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
+ const [overdueTasksCount, setOverdueTasksCount] = useState(0);
 
  const currentRoute = useMemo(() => {
   return SHELL_ROUTES.find((route) => pathname.startsWith(route.href)) ?? null;
@@ -203,6 +206,73 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   };
  }, [activeFamilyId, pathname]);
 
+ useEffect(() => {
+  let unsubscribed = false;
+  let cleanupRealtime: (() => void) | null = null;
+
+  const setupOverdueBadge = async () => {
+   if (!activeFamilyId || !isShellRoute(pathname)) {
+    setOverdueTasksCount(0);
+    return;
+   }
+
+   try {
+    const supabase = getSupabaseBrowserClient();
+
+    const refreshOverdue = async () => {
+      const nowIso = new Date().toISOString();
+      const countQuery = await supabase
+       .from("tasks")
+       .select("id", { count: "exact", head: true })
+       .eq("family_id", activeFamilyId)
+       .not("due_date", "is", null)
+       .lt("due_date", nowIso)
+       .is("completed_at", null);
+
+      if (countQuery.error) {
+       setOverdueTasksCount(0);
+       return;
+      }
+
+      if (!unsubscribed) {
+       setOverdueTasksCount(countQuery.count ?? 0);
+      }
+    };
+
+    await refreshOverdue();
+
+    const channel = supabase
+     .channel(`sidebar-overdue-${activeFamilyId}`)
+     .on(
+      "postgres_changes",
+      {
+       event: "*",
+       schema: "public",
+       table: "tasks",
+       filter: `family_id=eq.${activeFamilyId}`,
+      },
+      async () => {
+       await refreshOverdue();
+      },
+     )
+     .subscribe();
+
+    cleanupRealtime = () => {
+      channel.unsubscribe();
+    };
+   } catch {
+    setOverdueTasksCount(0);
+   }
+  };
+
+  void setupOverdueBadge();
+
+  return () => {
+   unsubscribed = true;
+   cleanupRealtime?.();
+  };
+ }, [activeFamilyId, pathname]);
+
  const onSignOut = async () => {
   try {
    const supabase = getSupabaseBrowserClient();
@@ -310,6 +380,11 @@ function ShellContent({ children }: { children: React.ReactNode }) {
          {route.href === "/messages" && unreadMessagesCount > 0 && !pathname.startsWith("/messages") && (
           <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C93C3C] px-1.5 text-[10px] font-semibold text-white">
            {unreadMessagesCount > 99 ? "99+" : unreadMessagesCount}
+          </span>
+         )}
+         {route.href === "/tasks" && overdueTasksCount > 0 && !pathname.startsWith("/tasks") && (
+          <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C93C3C] px-1.5 text-[10px] font-semibold text-white">
+           {overdueTasksCount > 99 ? "99+" : overdueTasksCount}
           </span>
          )}
         </span>
