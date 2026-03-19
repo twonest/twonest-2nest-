@@ -90,7 +90,17 @@ type CalendarTaskEvent = {
  dueDateIso: string;
 };
 
-type CalendarDisplayEvent = CalendarEvent | CalendarSpecialDayEvent | CalendarTaskEvent;
+type CalendarCollecteEvent = {
+ id: string;
+ title: string;
+ start: Date;
+ end: Date;
+ allDay: true;
+ kind: "collecte";
+ collecteKind: "garbage" | "recycling" | "compost";
+};
+
+type CalendarDisplayEvent = CalendarEvent | CalendarSpecialDayEvent | CalendarTaskEvent | CalendarCollecteEvent;
 
 type TaskCalendarItem = {
  id: string;
@@ -191,6 +201,12 @@ const WEEKDAY_OPTIONS: Array<{ jsDay: number; label: string }> = [
  { jsDay: 6, label: "Samedi" },
  { jsDay: 0, label: "Dimanche" },
 ];
+
+const COLLECTE_STYLE: Record<"garbage" | "recycling" | "compost", { icon: string; label: string; color: string }> = {
+ garbage: { icon: "🗑️", label: "Ordures", color: "#6F6F6F" },
+ recycling: { icon: "♻️", label: "Recyclage", color: "#3D88CE" },
+ compost: { icon: "🌱", label: "Compost", color: "#4C9B5C" },
+};
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
 const SHARED_CHILD_KEY = "twonest.selectedChildId";
 const SHARED_CHILD_NAME_KEY = "twonest.selectedChildName";
@@ -1656,9 +1672,106 @@ export default function CalendarPage() {
      .filter((item): item is CalendarTaskEvent => item !== null);
    }, [tasks]);
 
+   const collecteCalendarEvents = useMemo<CalendarCollecteEvent[]>(() => {
+    if (!collectesConfig) {
+     return [];
+    }
+
+    const eventsList: CalendarCollecteEvent[] = [];
+    const monthStart = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1);
+    const monthEnd = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0);
+    const cursor = new Date(monthStart);
+
+    while (cursor <= monthEnd) {
+     const dayStart = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate());
+     const dayEnd = new Date(dayStart);
+     dayEnd.setDate(dayEnd.getDate() + 1);
+
+     if (collectesConfig.garbageDay !== null && cursor.getDay() === collectesConfig.garbageDay) {
+      eventsList.push({
+       id: `collecte-garbage-${toDateOnlyKey(dayStart)}`,
+       title: `${COLLECTE_STYLE.garbage.icon} Collecte ${COLLECTE_STYLE.garbage.label.toLowerCase()}`,
+       start: dayStart,
+       end: dayEnd,
+       allDay: true,
+       kind: "collecte",
+       collecteKind: "garbage",
+      });
+     }
+
+     if (collectesConfig.recyclingDay !== null && cursor.getDay() === collectesConfig.recyclingDay) {
+      eventsList.push({
+       id: `collecte-recycling-${toDateOnlyKey(dayStart)}`,
+       title: `${COLLECTE_STYLE.recycling.icon} Collecte ${COLLECTE_STYLE.recycling.label.toLowerCase()}`,
+       start: dayStart,
+       end: dayEnd,
+       allDay: true,
+       kind: "collecte",
+       collecteKind: "recycling",
+      });
+     }
+
+     if (collectesConfig.compostDay !== null && cursor.getDay() === collectesConfig.compostDay) {
+      eventsList.push({
+       id: `collecte-compost-${toDateOnlyKey(dayStart)}`,
+       title: `${COLLECTE_STYLE.compost.icon} Collecte ${COLLECTE_STYLE.compost.label.toLowerCase()}`,
+       start: dayStart,
+       end: dayEnd,
+       allDay: true,
+       kind: "collecte",
+       collecteKind: "compost",
+      });
+     }
+
+     cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return eventsList;
+   }, [calendarDate, collectesConfig]);
+
  const calendarDisplayEvents = useMemo<CalendarDisplayEvent[]>(() => {
-    return [...filteredEvents, ...calendarSpecialEvents, ...taskCalendarEvents];
-   }, [calendarSpecialEvents, filteredEvents, taskCalendarEvents]);
+    return [...filteredEvents, ...calendarSpecialEvents, ...collecteCalendarEvents, ...taskCalendarEvents];
+   }, [calendarSpecialEvents, collecteCalendarEvents, filteredEvents, taskCalendarEvents]);
+
+   const collectesSummary = useMemo(() => {
+    if (!collectesConfig) {
+     return null;
+    }
+
+    const now = new Date();
+    const resolveNextDate = (day: number | null): string => {
+      if (day === null) {
+        return "Non configuré";
+      }
+
+      const cursor = new Date(now);
+      for (let step = 0; step < 8; step += 1) {
+        if (cursor.getDay() === day) {
+          return cursor.toLocaleDateString("fr-CA", { weekday: "long", day: "2-digit", month: "2-digit" });
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      return "Non configuré";
+    };
+
+    const dayLabel = (day: number | null): string => WEEKDAY_OPTIONS.find((item) => item.jsDay === day)?.label ?? "Non défini";
+
+    return {
+      garbage: {
+        day: dayLabel(collectesConfig.garbageDay),
+        next: resolveNextDate(collectesConfig.garbageDay),
+      },
+      recycling: {
+        day: dayLabel(collectesConfig.recyclingDay),
+        next: resolveNextDate(collectesConfig.recyclingDay),
+      },
+      compost: {
+        day: dayLabel(collectesConfig.compostDay),
+        next: resolveNextDate(collectesConfig.compostDay),
+      },
+      reminder: collectesConfig.reminderTime,
+    };
+   }, [collectesConfig]);
 
    const todayTaskEvents = useMemo(() => {
     const today = new Date();
@@ -2508,6 +2621,33 @@ export default function CalendarPage() {
      )}
 
     <div className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
+     <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">POUBELLES ET COLLECTES</p>
+     {!collectesSummary ? (
+      <p className="mt-2 text-sm text-[#6B5D55]">
+       Aucune configuration pour le moment. Clique sur <span className="font-semibold">🗑️ Collectes</span> pour configurer les jours.
+      </p>
+     ) : (
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+       <div className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm text-[#2C2420]">
+        <p className="font-semibold">🗑️ Ordures</p>
+        <p>{collectesSummary.garbage.day}</p>
+        <p className="text-xs text-[#6B5D55]">Prochaine: {collectesSummary.garbage.next}</p>
+       </div>
+       <div className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm text-[#2C2420]">
+        <p className="font-semibold">♻️ Recyclage</p>
+        <p>{collectesSummary.recycling.day}</p>
+        <p className="text-xs text-[#6B5D55]">Prochaine: {collectesSummary.recycling.next}</p>
+       </div>
+       <div className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm text-[#2C2420]">
+        <p className="font-semibold">🌱 Compost</p>
+        <p>{collectesSummary.compost.day}</p>
+        <p className="text-xs text-[#6B5D55]">Prochaine: {collectesSummary.compost.next}</p>
+       </div>
+      </div>
+     )}
+    </div>
+
+    <div className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
      <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">TÂCHES DU JOUR</p>
      <div className="mt-2 space-y-2">
       {todayTaskEvents.length === 0 ? (
@@ -2544,8 +2684,10 @@ export default function CalendarPage() {
        titleAccessor={(event: CalendarDisplayEvent) =>
         event.kind === "special"
          ? event.title
-         : event.kind === "task"
+        : event.kind === "task"
           ? `${event.title} · Tâche`
+         : event.kind === "collecte"
+          ? `${event.title} · Collecte`
           : `${event.title} · ${event.type}`
        }
        onSelectEvent={(event: CalendarDisplayEvent) => {
@@ -2556,6 +2698,9 @@ export default function CalendarPage() {
         if (event.kind === "task") {
          router.push("/tasks");
          return;
+        }
+        if (event.kind === "collecte") {
+        return;
         }
         openEditForm(event);
        }}
@@ -2610,6 +2755,20 @@ export default function CalendarPage() {
            color: "#ffffff",
            padding: "2px 6px",
            fontWeight: 600,
+          },
+         };
+        }
+        if (event.kind === "collecte") {
+         const cfg = COLLECTE_STYLE[event.collecteKind];
+         return {
+          style: {
+           backgroundColor: cfg.color,
+           borderRadius: "10px",
+           border: "none",
+           color: "#ffffff",
+           padding: "2px 6px",
+           fontWeight: 600,
+           opacity: 0.95,
           },
          };
         }

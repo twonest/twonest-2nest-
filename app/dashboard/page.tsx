@@ -239,6 +239,24 @@ export default function DashboardPage() {
       </select>
      </div>
 
+     <Link
+      href="/tasks"
+      className="sm:col-span-2 rounded-2xl border border-[#D9D0C8] bg-[#FFF9F3] p-5 shadow-[0_1px_4px_rgba(44,36,32,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_2px_8px_rgba(44,36,32,0.08)]"
+     >
+      <p className="text-xs font-semibold tracking-[0.16em] text-[#A89080]">TABLEAU DE BORD TACHES</p>
+      <p className="mt-2 text-lg font-semibold text-[#2C2420]">Voir la repartition Parent 1 / Parent 2</p>
+      <p className="mt-1 text-sm text-[#6B5D55]">Filtres semaine, mois, annee et categorie disponibles.</p>
+     </Link>
+
+     <Link
+      href="/calendar"
+      className="sm:col-span-2 rounded-2xl border border-[#D9D0C8] bg-[#F5FAFF] p-5 shadow-[0_1px_4px_rgba(44,36,32,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_2px_8px_rgba(44,36,32,0.08)]"
+     >
+      <p className="text-xs font-semibold tracking-[0.16em] text-[#7C98B8]">COLLECTES</p>
+      <p className="mt-2 text-lg font-semibold text-[#2C2420]">Configurer poubelles, recyclage et compost</p>
+      <p className="mt-1 text-sm text-[#6B5D55]">Dans le calendrier: bouton 🗑️ Collectes puis sauvegarde des jours.</p>
+     </Link>
+
      {visibleActions.map((action) => {
       const Icon = action.icon;
       return (
