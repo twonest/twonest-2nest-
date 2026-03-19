@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
  CalendarIcon,
  CheckSquare,
@@ -67,7 +67,9 @@ function ShellContent({ children }: { children: React.ReactNode }) {
  const [selectorOpen, setSelectorOpen] = useState(false);
  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
  const [groceryPendingCount, setGroceryPendingCount] = useState(0);
+ const [groceryBadgePulse, setGroceryBadgePulse] = useState(false);
  const [overdueTasksCount, setOverdueTasksCount] = useState(0);
+ const previousGroceryCountRef = useRef(0);
 
  const currentRoute = useMemo(() => {
   return SHELL_ROUTES.find((route) => pathname.startsWith(route.href)) ?? null;
@@ -231,11 +233,18 @@ function ShellContent({ children }: { children: React.ReactNode }) {
 
       if (countQuery.error) {
        setGroceryPendingCount(0);
+         previousGroceryCountRef.current = 0;
        return;
       }
 
       if (!unsubscribed) {
-       setGroceryPendingCount(countQuery.count ?? 0);
+         const nextCount = countQuery.count ?? 0;
+         if (nextCount > previousGroceryCountRef.current) {
+          setGroceryBadgePulse(true);
+          window.setTimeout(() => setGroceryBadgePulse(false), 1200);
+         }
+         previousGroceryCountRef.current = nextCount;
+         setGroceryPendingCount(nextCount);
       }
     };
 
@@ -272,6 +281,16 @@ function ShellContent({ children }: { children: React.ReactNode }) {
    cleanupRealtime?.();
   };
  }, [activeFamilyId, pathname]);
+
+ useEffect(() => {
+  const onExternalGroceryAdded = () => {
+   setGroceryBadgePulse(true);
+   window.setTimeout(() => setGroceryBadgePulse(false), 1200);
+  };
+
+  window.addEventListener("twonest:grocery-added", onExternalGroceryAdded);
+  return () => window.removeEventListener("twonest:grocery-added", onExternalGroceryAdded);
+ }, []);
 
  useEffect(() => {
   let unsubscribed = false;
@@ -450,7 +469,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
           </span>
          )}
          {route.href === "/grocery" && groceryPendingCount > 0 && !pathname.startsWith("/grocery") && (
-          <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C93C3C] px-1.5 text-[10px] font-semibold text-white">
+          <span className={`inline-flex min-w-5 items-center justify-center rounded-full bg-[#C93C3C] px-1.5 text-[10px] font-semibold text-white ${groceryBadgePulse ? "animate-pulse" : ""}`}>
            {groceryPendingCount > 99 ? "99+" : groceryPendingCount}
           </span>
          )}

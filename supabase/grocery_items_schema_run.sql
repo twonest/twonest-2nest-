@@ -8,7 +8,7 @@ create table if not exists public.grocery_items (
   family_id uuid not null references public.families(id) on delete cascade,
   name text not null,
   quantity text,
-  category text not null default 'other' check (category in ('fruits_vegetables', 'meats_fish', 'dairy', 'bakery', 'household', 'pharmacy', 'other')),
+  category text not null default 'other',
   added_by uuid references auth.users(id) on delete set null,
   added_by_name text,
   is_checked boolean not null default false,
@@ -89,9 +89,6 @@ alter column updated_at set default now();
 
 alter table public.grocery_items
 drop constraint if exists grocery_items_category_check;
-
-alter table public.grocery_items
-add constraint grocery_items_category_check check (category in ('fruits_vegetables', 'meats_fish', 'dairy', 'bakery', 'household', 'pharmacy', 'other'));
 
 create index if not exists grocery_items_family_id_idx on public.grocery_items(family_id);
 create index if not exists grocery_items_family_category_idx on public.grocery_items(family_id, category);
