@@ -1100,99 +1100,25 @@ export default function CalendarPage() {
    return weekNumber % 2 === 0;
   };
 
-   const resolveReminderParent = (targetDate: Date, mode: "parent1" | "parent2" | "alternate"): ParentRole => {
-    if (mode === "parent1" || mode === "parent2") {
-    return mode;
-    }
-
-    const weekIndex = Math.floor(toUtcDayMs(targetDate) / (7 * 24 * 60 * 60 * 1000));
-    return weekIndex % 2 === 0 ? "parent1" : "parent2";
-   };
-
-   const syncCollecteReminderEvents = async (
-    config: CollecteConfig,
+   const clearCollecteReminderEvents = async (
     client = getSupabaseBrowserClient(),
     familyId?: string | null,
    ) => {
     if (!familyId || !user) {
-    return;
+     return false;
     }
 
-    const targetFamilyId = familyId;
-    const startRange = new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1);
-    const endRange = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 2, 0);
+    const deleteResponse = await client
+     .from("events")
+     .delete()
+     .eq("family_id", familyId)
+     .eq("type", "Poubelles/Recyclage");
 
-    const existingResponse = await client
-    .from("events")
-    .select("id, title, start_at")
-    .eq("family_id", targetFamilyId)
-    .eq("type", "Poubelles/Recyclage")
-    .gte("start_at", startRange.toISOString())
-    .lte("start_at", new Date(endRange.getFullYear(), endRange.getMonth(), endRange.getDate(), 23, 59, 59).toISOString());
-
-    const existingRows = ((existingResponse.data ?? []) as Array<Record<string, unknown>>).map((row) => {
-    const titleValue = typeof row.title === "string" ? row.title : "";
-    const startAtValue = typeof row.start_at === "string" ? row.start_at : "";
-    return `${toDateOnlyKey(new Date(startAtValue))}|${titleValue}`;
-    });
-
-    const existingSet = new Set(existingRows);
-    const inserts: Array<Record<string, unknown>> = [];
-    const dayByType: Array<{ day: number | null; label: string; cycle: "weekly" | "A" | "B" }> = [
-    { day: config.garbageDay, label: "ordures", cycle: config.garbageCycle },
-    { day: config.recyclingDay, label: "recyclage", cycle: config.recyclingCycle },
-    { day: config.compostDay, label: "compost", cycle: config.compostCycle },
-    ];
-
-    const [hourRaw, minuteRaw] = config.reminderTime.split(":");
-    const reminderHour = Number.isFinite(Number(hourRaw)) ? Number(hourRaw) : 20;
-    const reminderMinute = Number.isFinite(Number(minuteRaw)) ? Number(minuteRaw) : 0;
-
-    const cursor = new Date(startRange);
-    while (cursor <= endRange) {
-    for (const definition of dayByType) {
-     if (definition.day === null || cursor.getDay() !== definition.day) {
-      continue;
-     }
-
-    if (!shouldCollectOnDate(cursor, definition.cycle)) {
-      cursor.setDate(cursor.getDate() + 1);
-      continue;
-     }
-
-     const reminderDate = new Date(cursor);
-     reminderDate.setDate(reminderDate.getDate() - 1);
-     reminderDate.setHours(reminderHour, reminderMinute, 0, 0);
-
-     const reminderTitle = `⚠️ Sortir les ${definition.label} ce soir`;
-     const key = `${toDateOnlyKey(reminderDate)}|${reminderTitle}`;
-     if (existingSet.has(key)) {
-      cursor.setDate(cursor.getDate() + 1);
-      continue;
-     }
-
-     const reminderEnd = new Date(reminderDate);
-     reminderEnd.setMinutes(reminderEnd.getMinutes() + 30);
-
-     inserts.push({
-      family_id: targetFamilyId,
-      user_id: user.id,
-      title: reminderTitle,
-      type: "Poubelles/Recyclage",
-      parent: resolveReminderParent(cursor, config.assignmentMode),
-      start_at: reminderDate.toISOString(),
-      end_at: reminderEnd.toISOString(),
-     });
+    if (deleteResponse.error) {
+     return false;
     }
 
-    cursor.setDate(cursor.getDate() + 1);
-    }
-
-    if (inserts.length === 0) {
-    return;
-    }
-
-    await client.from("events").insert(inserts);
+      return true;
    };
 
  const syncJournalForEvent = async (
@@ -1354,31 +1280,31 @@ export default function CalendarPage() {
   };
  }, [activeFamilyId, router]);
 
-   useEffect(() => {
-    if (!collectesConfig || !currentFamilyId || !user) {
-     return;
+  useEffect(() => {
+   if (!currentFamilyId || !user) {
+    return;
+   }
+
+   let cancelled = false;
+
+   const cleanup = async () => {
+    try {
+    const supabase = getSupabaseBrowserClient();
+    const deleted = await clearCollecteReminderEvents(supabase, currentFamilyId);
+    if (!cancelled && deleted) {
+     await refreshEvents(supabase, currentFamilyId);
     }
+    } catch {
+    return;
+    }
+   };
 
-    let cancelled = false;
+   void cleanup();
 
-    const sync = async () => {
-     try {
-      const supabase = getSupabaseBrowserClient();
-      await syncCollecteReminderEvents(collectesConfig, supabase, currentFamilyId);
-      if (!cancelled) {
-       await refreshEvents(supabase, currentFamilyId);
-      }
-     } catch {
-      return;
-     }
-    };
-
-    void sync();
-
-    return () => {
-     cancelled = true;
-    };
-   }, [calendarDate, collectesConfig, currentFamilyId, user]);
+   return () => {
+    cancelled = true;
+   };
+  }, [currentFamilyId, user]);
 
  const calendarAccess = familyRole
   ? getFeatureAccess("calendar", familyRole, currentPermissions)
@@ -4626,21 +4552,6 @@ export default function CalendarPage() {
           </div>
          </div>
         </div>
-        </div>
-       </div>
-
-       <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-        <label htmlFor="reminderTime" className="mb-1 block text-sm font-medium text-[#6B5D55]">Heure du rappel</label>
-        <input id="reminderTime" type="time" value={collectesReminderTime} onChange={(event) => setCollectesReminderTime(event.target.value)} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]" />
-        </div>
-        <div>
-        <label htmlFor="assignmentMode" className="mb-1 block text-sm font-medium text-[#6B5D55]">Attribution du rappel</label>
-        <select id="assignmentMode" value={collectesAssignmentMode} onChange={(event) => setCollectesAssignmentMode(event.target.value as "parent1" | "parent2" | "alternate")} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]">
-         <option value="alternate">Alternance</option>
-         <option value="parent1">Parent 1</option>
-         <option value="parent2">Parent 2</option>
-        </select>
         </div>
        </div>
 
