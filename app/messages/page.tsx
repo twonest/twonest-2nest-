@@ -449,7 +449,7 @@ export default function MessagesPage() {
  }
 
  return (
-	<div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#F5F0EB] via-[#EFE9E2] to-[#EDE8E3] px-4 py-6 sm:px-6">
+	<div className="relative min-h-screen overflow-hidden bg-[#F5F0EB] px-4 py-6 sm:px-6">
 	 <main className="mx-auto flex h-[calc(100vh-7rem)] w-full max-w-5xl flex-col rounded-3xl border border-[#D9D0C8] bg-white/90 shadow-[0_12px_40px_rgba(44,36,32,0.10)]">
 		<header className="border-b border-[#E3D9CF] px-5 py-4">
 		 <h1 className="text-xl font-semibold text-[#2C2420]">Conversation familiale</h1>
@@ -475,25 +475,40 @@ export default function MessagesPage() {
 				}
 
 				const message = item.message;
-				const bubbleClass = message.isMine ? "bg-[#7C6B5D] text-white" : "bg-[#EDE8E3] text-[#2C2420]";
+				const bubbleClass = message.isMine ? "bg-[#7C6B5D]" : "border border-[#D9D0C8] bg-[#FFFFFF]";
 
 				return (
 				 <div key={message.id} className={`flex ${message.isMine ? "justify-end" : "justify-start"}`}>
 					<div className="max-w-[80%] sm:max-w-[70%]">
-					 <div className={`rounded-2xl px-4 py-3 ${bubbleClass}`}>
+					 <div
+						className={`rounded-2xl px-4 py-3 ${bubbleClass}`}
+						style={
+						 message.isMine
+							? { backgroundColor: "#7C6B5D", color: "#FFFFFF" }
+							: {
+								backgroundColor: "#FFFFFF",
+								color: "#2C2420",
+								border: "1px solid #D9D0C8",
+							 }
+						}
+					 >
 						{message.content ? <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p> : null}
 						{message.attachmentUrl && (
 						 <a
 							href={message.attachmentUrl}
 							target="_blank"
 							rel="noreferrer"
-							className={`mt-2 block rounded-xl border px-3 py-2 text-sm ${message.isMine ? "border-white/40 text-white" : "border-[#CDBFB2] text-[#2C2420]"}`}
+							className={`mt-2 block rounded-xl border px-3 py-2 text-sm ${message.isMine ? "border-white/40" : "border-[#CDBFB2]"}`}
+							style={{ color: "inherit" }}
 						 >
 							{message.attachmentName ?? "Pièce jointe"}
 						 </a>
 						)}
 					 </div>
-					 <div className={`mt-1 px-1 text-xs ${message.isMine ? "text-right text-[#7C6B5D]" : "text-left text-[#6B5D55]"}`}>
+					 <div
+						className={`mt-1 px-1 ${message.isMine ? "text-right" : "text-left"}`}
+						style={{ color: "#A89080", fontSize: "11px" }}
+					 >
 						<p>{message.senderFirstName} · {formatExactDateTime(message.createdAt)}</p>
 						{message.isMine && message.readAt && <p>Lu à {formatTimeLabel(message.readAt)}</p>}
 					 </div>
@@ -506,7 +521,7 @@ export default function MessagesPage() {
 		 )}
 		</section>
 
-		<footer className="border-t border-[#E3D9CF] px-4 py-4 sm:px-6">
+		<footer className="border-t border-[#E3D9CF] bg-[#FFFFFF] px-4 py-4 sm:px-6">
 		 {errorMessage && <p className="mb-2 text-sm text-[#A85C52]">{errorMessage}</p>}
 		 {toast && (
 			<p className={`mb-2 text-sm ${toast.variant === "error" ? "text-[#A85C52]" : "text-[#4A7A57]"}`}>
@@ -532,7 +547,7 @@ export default function MessagesPage() {
 			 <Paperclip size={18} />
 			</button>
 
-			<div className="flex-1 rounded-2xl border border-[#D9D0C8] bg-white px-3 py-2">
+			<div className="flex-1 rounded-2xl border border-[#D9D0C8] bg-[#FFFFFF] px-3 py-2">
 			 <textarea
 				value={text}
 				onChange={(event) => setText(event.target.value)}
@@ -544,7 +559,7 @@ export default function MessagesPage() {
 				}}
 				placeholder="Écrire un message..."
 				rows={2}
-				className="w-full resize-none bg-transparent text-sm text-[#2C2420] outline-none"
+				className="w-full resize-none bg-transparent text-sm text-[#2C2420] placeholder-[#A89080] outline-none"
 			 />
 			 {selectedFile && (
 				<p className="mt-1 truncate text-xs text-[#6B5D55]">Pièce jointe: {selectedFile.name}</p>
