@@ -492,7 +492,7 @@ export default function MessagesPage() {
 							 }
 						}
 					 >
-						{message.content ? <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p> : null}
+								{message.content ? <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: 'inherit' }}>{message.content}</p> : null}
 						{message.attachmentUrl && (
 						 <a
 							href={message.attachmentUrl}
@@ -509,8 +509,8 @@ export default function MessagesPage() {
 						className={`mt-1 px-1 ${message.isMine ? "text-right" : "text-left"}`}
 						style={{ color: "#A89080", fontSize: "11px" }}
 					 >
-						<p>{message.senderFirstName} · {formatExactDateTime(message.createdAt)}</p>
-						{message.isMine && message.readAt && <p>Lu à {formatTimeLabel(message.readAt)}</p>}
+						<p style={{ color: "inherit" }}>{message.senderFirstName} · {formatExactDateTime(message.createdAt)}</p>
+						{message.isMine && message.readAt && <p style={{ color: "inherit" }}>Lu à {formatTimeLabel(message.readAt)}</p>}
 					 </div>
 					</div>
 				 </div>
