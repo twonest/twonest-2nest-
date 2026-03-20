@@ -6,7 +6,35 @@ import moment from "moment";
 import "moment/locale/fr";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BookOpen, CheckCircle, ChevronLeft, ChevronRight, Clock, Download, Eye, Loader, Pencil, PlusCircle, RefreshCcw, School, Trash2, X, XCircle } from "lucide-react";
+import {
+ ArrowLeft,
+ ArrowLeftRight,
+ BookOpen,
+ Briefcase,
+ Calendar as CalendarIcon,
+ CheckCircle,
+ ChevronLeft,
+ ChevronRight,
+ Clock,
+ Download,
+ Eye,
+ GraduationCap,
+ Leaf,
+ Loader,
+ Pencil,
+ PlusCircle,
+ RefreshCcw,
+ RefreshCw,
+ School,
+ ShoppingCart,
+ Stethoscope,
+ Trash2,
+ Trophy,
+ UserCheck,
+ X,
+ XCircle,
+ type LucideIcon,
+} from "lucide-react";
 import { Calendar, momentLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import type { User } from "@supabase/supabase-js";
@@ -36,6 +64,12 @@ type EventType =
  | "École"
  | "Activité"
  | "Épicerie"
+ | "Ordures"
+ | "Recyclage"
+ | "Compost"
+ | "Shift travail"
+ | "Changement shift"
+ | "Autre"
  | "Poubelles/Recyclage"
  | "Planification des repas"
  | "Entretien maison"
@@ -100,7 +134,57 @@ type CalendarCollecteEvent = {
  collecteKind: "garbage" | "recycling" | "compost";
 };
 
-type CalendarDisplayEvent = CalendarEvent | CalendarSpecialDayEvent | CalendarTaskEvent | CalendarCollecteEvent;
+type WorkShiftType = "jour" | "soir" | "nuit" | "personnalise";
+type WorkShiftFrequency = "weekly" | "biweekly" | "custom";
+type WorkShiftRecurrence = "once" | "recurring";
+
+type WorkShiftRow = {
+ id?: string | number;
+ family_id?: string;
+ user_id?: string;
+ title?: string;
+ shift_type?: WorkShiftType;
+ start_at?: string;
+ end_at?: string;
+ location?: string | null;
+ color?: string | null;
+ recurrence_mode?: WorkShiftRecurrence;
+ recurrence_days?: number[] | null;
+ recurrence_start?: string | null;
+ recurrence_end?: string | null;
+ frequency?: WorkShiftFrequency;
+ is_override?: boolean | null;
+ base_shift_id?: string | null;
+ reason?: string | null;
+ notify_coparent?: boolean | null;
+ created_at?: string;
+ updated_at?: string;
+};
+
+type CalendarWorkShiftEvent = {
+ id: string;
+ title: string;
+ start: Date;
+ end: Date;
+ allDay?: boolean;
+ kind: "shift";
+ shiftType: WorkShiftType;
+ userId: string;
+ userLabel: string;
+ location: string | null;
+ color: string;
+ isOverride: boolean;
+ reason: string | null;
+ notifyCoparent: boolean;
+ sourceShiftId: string;
+};
+
+type CalendarDisplayEvent =
+ | CalendarEvent
+ | CalendarSpecialDayEvent
+ | CalendarTaskEvent
+ | CalendarCollecteEvent
+ | CalendarWorkShiftEvent;
 
 type TaskCalendarItem = {
  id: string;
@@ -188,7 +272,13 @@ const EVENT_TYPES: EventType[] = [
  "Médecin",
  "École",
  "Activité",
+ "Ordures",
+ "Recyclage",
+ "Compost",
+ "Shift travail",
+ "Changement shift",
  "Épicerie",
+ "Autre",
  "Poubelles/Recyclage",
  "Planification des repas",
  "Entretien maison",
@@ -208,6 +298,30 @@ const COLLECTE_STYLE: Record<"garbage" | "recycling" | "compost", { icon: string
  garbage: { icon: "🗑️", label: "Ordures", color: "#6F6F6F" },
  recycling: { icon: "♻️", label: "Recyclage", color: "#3D88CE" },
  compost: { icon: "🌱", label: "Compost", color: "#4C9B5C" },
+};
+
+const EVENT_VISUALS: Record<EventType, { icon: LucideIcon; color: string; shortLabel: string }> = {
+ Garde: { icon: UserCheck, color: "#4A90D9", shortLabel: "Garde" },
+ "Médecin": { icon: Stethoscope, color: "#E74C3C", shortLabel: "Médecin" },
+ "École": { icon: GraduationCap, color: "#F39C12", shortLabel: "École" },
+ "Activité": { icon: Trophy, color: "#9B59B6", shortLabel: "Activité" },
+ Ordures: { icon: Trash2, color: "#7F8C8D", shortLabel: "Ordures" },
+ Recyclage: { icon: RefreshCw, color: "#27AE60", shortLabel: "Recyclage" },
+ Compost: { icon: Leaf, color: "#8B6914", shortLabel: "Compost" },
+ "Shift travail": { icon: Briefcase, color: "#2C3E50", shortLabel: "Shift" },
+ "Changement shift": { icon: ArrowLeftRight, color: "#E67E22", shortLabel: "Shift" },
+ "Épicerie": { icon: ShoppingCart, color: "#16A085", shortLabel: "Épicerie" },
+ Autre: { icon: CalendarIcon, color: "#BDC3C7", shortLabel: "Autre" },
+ "Poubelles/Recyclage": { icon: Trash2, color: "#7F8C8D", shortLabel: "Collecte" },
+ "Planification des repas": { icon: CalendarIcon, color: "#BDC3C7", shortLabel: "Repas" },
+ "Entretien maison": { icon: CalendarIcon, color: "#BDC3C7", shortLabel: "Maison" },
+ "Formulaire à signer": { icon: CalendarIcon, color: "#BDC3C7", shortLabel: "Formulaire" },
+};
+
+const SHIFT_PRESETS: Record<Exclude<WorkShiftType, "personnalise">, { start: string; end: string; label: string }> = {
+ jour: { start: "07:00", end: "15:00", label: "Jour (7h-15h)" },
+ soir: { start: "15:00", end: "23:00", label: "Soir (15h-23h)" },
+ nuit: { start: "23:00", end: "07:00", label: "Nuit (23h-7h)" },
 };
 const SHARED_MONTH_KEY = "twonest.selectedMonth";
 const SHARED_CHILD_KEY = "twonest.selectedChildId";
@@ -291,6 +405,32 @@ function toDateOnlyKey(date: Date): string {
  const month = `${date.getMonth() + 1}`.padStart(2, "0");
  const day = `${date.getDate()}`.padStart(2, "0");
  return `${year}-${month}-${day}`;
+}
+
+function parseIsoDate(value: string | null | undefined): Date | null {
+ if (!value) {
+  return null;
+ }
+ const parsed = new Date(value);
+ return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function shortEventTitle(value: string, maxLength = 18): string {
+ const normalized = value.trim();
+ if (normalized.length <= maxLength) {
+  return normalized;
+ }
+ return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function weekdayJsToIso(weekday: number): number {
+ return weekday === 0 ? 7 : weekday;
+}
+
+function isWorkShiftSchemaMissing(message: string): boolean {
+ const normalized = message.toLowerCase();
+ const missingObject = normalized.includes("does not exist") || normalized.includes("could not find");
+ return missingObject && normalized.includes("work_shifts");
 }
 
 function listDateKeysBetween(start: Date, end: Date): string[] {
@@ -512,6 +652,27 @@ export default function CalendarPage() {
  const [collectesFrequence, setCollectesFrequence] = useState<"weekly" | "biweekly" | "monthly">("weekly");
  const [collectesSemuinesAlternees, setCollectesSemuinesAlternees] = useState<"A" | "B" | null>(null);
  const [isSavingCollectes, setIsSavingCollectes] = useState(false);
+ const [workShifts, setWorkShifts] = useState<CalendarWorkShiftEvent[]>([]);
+ const [shiftFormOpen, setShiftFormOpen] = useState(false);
+ const [shiftEditMode, setShiftEditMode] = useState<"create" | "edit" | "override">("create");
+ const [shiftTargetId, setShiftTargetId] = useState("");
+ const [shiftTitle, setShiftTitle] = useState("Shift travail");
+ const [shiftType, setShiftType] = useState<WorkShiftType>("jour");
+ const [shiftStartAt, setShiftStartAt] = useState(() => formatForDateTimeLocal(new Date()));
+ const [shiftEndAt, setShiftEndAt] = useState(() => formatForDateTimeLocal(new Date(Date.now() + 8 * 60 * 60 * 1000)));
+ const [shiftLocation, setShiftLocation] = useState("");
+ const [shiftColor, setShiftColor] = useState("#2C3E50");
+ const [shiftRecurrenceMode, setShiftRecurrenceMode] = useState<WorkShiftRecurrence>("once");
+ const [shiftRecurrenceDays, setShiftRecurrenceDays] = useState<Record<number, boolean>>({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false });
+ const [shiftRecurrenceStart, setShiftRecurrenceStart] = useState(() => formatForDateInput(new Date()));
+ const [shiftRecurrenceEnd, setShiftRecurrenceEnd] = useState("");
+ const [shiftFrequency, setShiftFrequency] = useState<WorkShiftFrequency>("weekly");
+ const [shiftReason, setShiftReason] = useState("");
+ const [shiftNotifyCoparent, setShiftNotifyCoparent] = useState(true);
+ const [shiftError, setShiftError] = useState("");
+ const [isSavingShift, setIsSavingShift] = useState(false);
+ const [isDeletingShift, setIsDeletingShift] = useState(false);
+ const [activeShiftMenu, setActiveShiftMenu] = useState<CalendarWorkShiftEvent | null>(null);
 
  const canSubmit = useMemo(() => title.trim().length > 0 && startAt.length > 0 && endAt.length > 0, [title, startAt, endAt]);
 
@@ -527,6 +688,35 @@ export default function CalendarPage() {
  useEffect(() => {
   moment.locale("fr");
  }, []);
+
+ useEffect(() => {
+  if (shiftType === "personnalise") {
+   return;
+  }
+
+  const preset = SHIFT_PRESETS[shiftType];
+  if (!preset) {
+   return;
+  }
+
+  const baseDate = shiftStartAt ? new Date(shiftStartAt) : new Date();
+  if (Number.isNaN(baseDate.getTime())) {
+   return;
+  }
+
+  const [startHour, startMinute] = preset.start.split(":").map(Number);
+  const [endHour, endMinute] = preset.end.split(":").map(Number);
+  const nextStart = new Date(baseDate);
+  nextStart.setHours(startHour, startMinute, 0, 0);
+  const nextEnd = new Date(baseDate);
+  nextEnd.setHours(endHour, endMinute, 0, 0);
+  if (nextEnd <= nextStart) {
+   nextEnd.setDate(nextEnd.getDate() + 1);
+  }
+
+  setShiftStartAt(formatForDateTimeLocal(nextStart));
+  setShiftEndAt(formatForDateTimeLocal(nextEnd));
+ }, [shiftType]);
 
  useEffect(() => {
   const storedMonth = window.localStorage.getItem(SHARED_MONTH_KEY);
@@ -716,39 +906,153 @@ export default function CalendarPage() {
     return;
     }
 
-    const response = await client
-    .from("collectes")
-    .select("family_id, garbage_day, recycling_day, compost_day, reminder_time, assignment_mode, frequence, semaines_alternees")
-    .eq("family_id", familyId)
-    .maybeSingle();
+    const response = await client.from("collectes").select("*").eq("family_id", familyId);
 
-    if (response.error || !response.data) {
+    if (response.error || !response.data || response.data.length === 0) {
     setCollectesConfig(null);
     return;
     }
 
-    const row = response.data as Record<string, unknown>;
+    const rows = response.data as Array<Record<string, unknown>>;
+    const first = rows[0] ?? {};
+
+    const hasLegacyColumns =
+    typeof first.garbage_day === "number" || typeof first.recycling_day === "number" || typeof first.compost_day === "number";
+
+    if (hasLegacyColumns) {
+    const nextConfig: CollecteConfig = {
+     familyId,
+     garbageDay: typeof first.garbage_day === "number" ? first.garbage_day : null,
+     recyclingDay: typeof first.recycling_day === "number" ? first.recycling_day : null,
+     compostDay: typeof first.compost_day === "number" ? first.compost_day : null,
+     reminderTime: typeof first.reminder_time === "string" ? first.reminder_time.slice(0, 5) : "20:00",
+     assignmentMode:
+      first.assignment_mode === "parent1" || first.assignment_mode === "parent2" || first.assignment_mode === "alternate"
+       ? first.assignment_mode
+       : "alternate",
+     frequence:
+      first.frequence === "weekly" || first.frequence === "biweekly" || first.frequence === "monthly"
+       ? first.frequence
+       : "weekly",
+     semuinesAlternees:
+      first.semaines_alternees === "A" || first.semaines_alternees === "B"
+       ? first.semaines_alternees
+       : null,
+    };
+
+    setCollectesConfig(nextConfig);
+    return;
+    }
+
+    const byType = rows.reduce<Record<string, Record<string, unknown>>>((accumulator, row) => {
+    const type = typeof row.type === "string" ? row.type.toLowerCase() : "";
+    if (type) {
+     accumulator[type] = row;
+    }
+    return accumulator;
+    }, {});
+
+    const garbage = byType.ordures;
+    const recycling = byType.recyclage;
+    const compost = byType.compost;
+    const reference = garbage ?? recycling ?? compost ?? {};
+
     const nextConfig: CollecteConfig = {
     familyId,
-    garbageDay: typeof row.garbage_day === "number" ? row.garbage_day : null,
-    recyclingDay: typeof row.recycling_day === "number" ? row.recycling_day : null,
-    compostDay: typeof row.compost_day === "number" ? row.compost_day : null,
-    reminderTime: typeof row.reminder_time === "string" ? row.reminder_time.slice(0, 5) : "20:00",
+    garbageDay: typeof garbage?.jour_semaine === "number" ? garbage.jour_semaine : null,
+    recyclingDay: typeof recycling?.jour_semaine === "number" ? recycling.jour_semaine : null,
+    compostDay: typeof compost?.jour_semaine === "number" ? compost.jour_semaine : null,
+    reminderTime: typeof reference.heure_rappel === "string" ? reference.heure_rappel.slice(0, 5) : "20:00",
     assignmentMode:
-     row.assignment_mode === "parent1" || row.assignment_mode === "parent2" || row.assignment_mode === "alternate"
-      ? row.assignment_mode
+     reference.assignment_mode === "parent1" || reference.assignment_mode === "parent2" || reference.assignment_mode === "alternate"
+      ? reference.assignment_mode
       : "alternate",
     frequence:
-     row.frequence === "weekly" || row.frequence === "biweekly" || row.frequence === "monthly"
-      ? row.frequence
+     reference.frequence === "weekly" || reference.frequence === "biweekly" || reference.frequence === "monthly"
+      ? reference.frequence
       : "weekly",
     semuinesAlternees:
-     row.semaines_alternees === "A" || row.semaines_alternees === "B"
-      ? row.semaines_alternees
+     reference.semaines_alternees === "A" || reference.semaines_alternees === "B"
+      ? reference.semaines_alternees
       : null,
     };
 
     setCollectesConfig(nextConfig);
+   };
+
+   const refreshWorkShifts = async (client = getSupabaseBrowserClient(), familyId?: string | null) => {
+    if (!familyId) {
+    setWorkShifts([]);
+    return;
+    }
+
+    const { data, error } = await client
+    .from("work_shifts")
+    .select("id, family_id, user_id, title, shift_type, start_at, end_at, location, color, recurrence_mode, recurrence_days, recurrence_start, recurrence_end, frequency, is_override, base_shift_id, reason, notify_coparent")
+    .eq("family_id", familyId)
+    .order("start_at", { ascending: true });
+
+    if (error) {
+    if (isWorkShiftSchemaMissing(error.message)) {
+     return;
+    }
+    return;
+    }
+
+    const rows = (data ?? []) as WorkShiftRow[];
+    const uniqueUserIds = Array.from(new Set(rows.map((row) => (typeof row.user_id === "string" ? row.user_id : "")).filter(Boolean)));
+
+    const namesByUserId: Record<string, string> = {};
+    if (uniqueUserIds.length > 0) {
+    const profileResponse = await client.from("profiles").select("user_id, first_name, prenom").in("user_id", uniqueUserIds);
+    const profileRows = (profileResponse.data ?? []) as Array<Record<string, unknown>>;
+    for (const uid of uniqueUserIds) {
+     const profile = profileRows.find((item) => item.user_id === uid);
+     const firstName =
+      typeof profile?.first_name === "string"
+       ? profile.first_name.trim()
+       : typeof profile?.prenom === "string"
+        ? profile.prenom.trim()
+        : "";
+     namesByUserId[uid] = firstName || "Parent";
+    }
+    }
+
+    const mapped = rows
+    .map((row): CalendarWorkShiftEvent | null => {
+     const id = row.id ? String(row.id) : "";
+     const userId = typeof row.user_id === "string" ? row.user_id : "";
+     const startDate = parseIsoDate(row.start_at);
+     const endDate = parseIsoDate(row.end_at);
+     if (!id || !userId || !startDate || !endDate) {
+      return null;
+     }
+
+     const shiftTypeValue: WorkShiftType =
+      row.shift_type === "soir" || row.shift_type === "nuit" || row.shift_type === "personnalise"
+       ? row.shift_type
+       : "jour";
+
+     return {
+      id: `shift-${id}`,
+      sourceShiftId: id,
+      title: typeof row.title === "string" && row.title.trim().length > 0 ? row.title.trim() : "Shift travail",
+      start: startDate,
+      end: endDate,
+      kind: "shift",
+      shiftType: shiftTypeValue,
+      userId,
+      userLabel: namesByUserId[userId] ?? "Parent",
+      location: typeof row.location === "string" ? row.location : null,
+      color: typeof row.color === "string" && row.color.trim().length > 0 ? row.color : "#2C3E50",
+      isOverride: Boolean(row.is_override),
+      reason: typeof row.reason === "string" ? row.reason : null,
+      notifyCoparent: Boolean(row.notify_coparent),
+     };
+    })
+    .filter((item): item is CalendarWorkShiftEvent => item !== null);
+
+    setWorkShifts(mapped);
    };
 
    const getISOWeekNumber = (date: Date): number => {
@@ -1020,6 +1324,7 @@ export default function CalendarPage() {
     refreshJournalEntries(supabase),
     refreshSpecialDays(supabase, familyId),
     refreshCollectes(supabase, familyId),
+    refreshWorkShifts(supabase, familyId),
    ]);
    setIsLoadingEvents(false);
    setIsLoadingSwapRequests(false);
@@ -1201,6 +1506,191 @@ export default function CalendarPage() {
   setCollectesError("");
  };
 
+ const resetShiftForm = () => {
+  const now = new Date();
+  const end = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  setShiftEditMode("create");
+  setShiftTargetId("");
+  setShiftTitle("Shift travail");
+  setShiftType("jour");
+  setShiftStartAt(formatForDateTimeLocal(now));
+  setShiftEndAt(formatForDateTimeLocal(end));
+  setShiftLocation("");
+  setShiftColor("#2C3E50");
+  setShiftRecurrenceMode("once");
+  setShiftRecurrenceDays({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false });
+  setShiftRecurrenceStart(formatForDateInput(now));
+  setShiftRecurrenceEnd("");
+  setShiftFrequency("weekly");
+  setShiftReason("");
+  setShiftNotifyCoparent(true);
+  setShiftError("");
+ };
+
+ const openShiftCreateForm = () => {
+  if (isReadOnly) {
+  return;
+  }
+  resetShiftForm();
+  setShiftFormOpen(true);
+ };
+
+ const openShiftEditForm = (shift: CalendarWorkShiftEvent) => {
+  if (isReadOnly) {
+  return;
+  }
+  setShiftEditMode("edit");
+  setShiftTargetId(shift.sourceShiftId);
+  setShiftTitle(shift.title);
+  setShiftType(shift.shiftType);
+  setShiftStartAt(formatForDateTimeLocal(shift.start));
+  setShiftEndAt(formatForDateTimeLocal(shift.end));
+  setShiftLocation(shift.location ?? "");
+  setShiftColor(shift.color);
+  setShiftRecurrenceMode("once");
+  setShiftRecurrenceDays({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false });
+  setShiftRecurrenceStart(formatForDateInput(shift.start));
+  setShiftRecurrenceEnd("");
+  setShiftFrequency("weekly");
+  setShiftReason(shift.reason ?? "");
+  setShiftNotifyCoparent(shift.notifyCoparent);
+  setShiftError("");
+  setShiftFormOpen(true);
+ };
+
+ const openShiftOverrideForm = (shift: CalendarWorkShiftEvent) => {
+  if (isReadOnly) {
+  return;
+  }
+  setShiftEditMode("override");
+  setShiftTargetId(shift.sourceShiftId);
+  setShiftTitle(`Changement - ${shift.title}`);
+  setShiftType("personnalise");
+  setShiftStartAt(formatForDateTimeLocal(shift.start));
+  setShiftEndAt(formatForDateTimeLocal(shift.end));
+  setShiftLocation(shift.location ?? "");
+  setShiftColor("#E67E22");
+  setShiftRecurrenceMode("once");
+  setShiftRecurrenceDays({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false });
+  setShiftRecurrenceStart(formatForDateInput(shift.start));
+  setShiftRecurrenceEnd("");
+  setShiftFrequency("weekly");
+  setShiftReason("");
+  setShiftNotifyCoparent(true);
+  setShiftError("");
+  setShiftFormOpen(true);
+ };
+
+ const openShiftCreateForDay = (shift: CalendarWorkShiftEvent) => {
+  if (isReadOnly) {
+  return;
+  }
+  resetShiftForm();
+  const base = new Date(shift.start.getFullYear(), shift.start.getMonth(), shift.start.getDate(), 9, 0, 0, 0);
+  const end = new Date(base.getTime() + 8 * 60 * 60 * 1000);
+  setShiftStartAt(formatForDateTimeLocal(base));
+  setShiftEndAt(formatForDateTimeLocal(end));
+  setShiftFormOpen(true);
+ };
+
+ const closeShiftForm = () => {
+  setShiftFormOpen(false);
+  setShiftError("");
+ };
+
+ const onDeleteShift = async () => {
+  if (!shiftTargetId) {
+  return;
+  }
+
+  setIsDeletingShift(true);
+  setShiftError("");
+
+  try {
+  const supabase = getSupabaseBrowserClient();
+  const remove = await supabase.from("work_shifts").delete().eq("id", shiftTargetId);
+  if (remove.error) {
+   throw new Error(remove.error.message);
+  }
+
+  await refreshWorkShifts(supabase, currentFamilyId);
+  closeShiftForm();
+  setActiveShiftMenu(null);
+  setToast({ message: "Shift supprimé.", variant: "success" });
+  } catch (error) {
+  setShiftError(error instanceof Error ? error.message : "Impossible de supprimer le shift.");
+  } finally {
+  setIsDeletingShift(false);
+  }
+ };
+
+ const onSaveShift = async (event: FormEvent<HTMLFormElement>) => {
+  event.preventDefault();
+
+  if (!currentFamilyId || !user || isReadOnly) {
+  return;
+  }
+
+  const startDate = new Date(shiftStartAt);
+  const endDate = new Date(shiftEndAt);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate <= startDate) {
+  setShiftError("Heures de shift invalides.");
+  return;
+  }
+
+  setIsSavingShift(true);
+  setShiftError("");
+
+  try {
+  const supabase = getSupabaseBrowserClient();
+  const basePayload: Record<string, unknown> = {
+   family_id: currentFamilyId,
+   user_id: user.id,
+   title: shiftTitle.trim() || "Shift travail",
+   shift_type: shiftType,
+   start_at: startDate.toISOString(),
+   end_at: endDate.toISOString(),
+   location: shiftLocation.trim() || null,
+   color: shiftColor,
+   recurrence_mode: shiftRecurrenceMode,
+   recurrence_days:
+    shiftRecurrenceMode === "recurring"
+    ? Object.entries(shiftRecurrenceDays)
+      .filter(([, checked]) => checked)
+      .map(([day]) => weekdayJsToIso(Number(day)))
+    : null,
+   recurrence_start: shiftRecurrenceMode === "recurring" ? shiftRecurrenceStart : null,
+   recurrence_end: shiftRecurrenceMode === "recurring" && shiftRecurrenceEnd ? shiftRecurrenceEnd : null,
+   frequency: shiftRecurrenceMode === "recurring" ? shiftFrequency : null,
+   is_override: shiftEditMode === "override",
+   base_shift_id: shiftEditMode === "override" ? shiftTargetId : null,
+   reason: shiftReason.trim() || null,
+   notify_coparent: shiftNotifyCoparent,
+  };
+
+  if (shiftEditMode === "edit" && shiftTargetId) {
+   const update = await supabase.from("work_shifts").update(basePayload).eq("id", shiftTargetId);
+   if (update.error) {
+    throw new Error(update.error.message);
+   }
+  } else {
+   const insert = await supabase.from("work_shifts").insert(basePayload);
+   if (insert.error) {
+    throw new Error(insert.error.message);
+   }
+  }
+
+  await refreshWorkShifts(supabase, currentFamilyId);
+  closeShiftForm();
+  setActiveShiftMenu(null);
+  setToast({ message: "Shift sauvegardé.", variant: "success" });
+  } catch (error) {
+  setShiftError(error instanceof Error ? error.message : "Impossible de sauvegarder le shift.");
+  } finally {
+  setIsSavingShift(false);
+  }
+ };
+
  const onSaveCollectes = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
 
@@ -1213,7 +1703,47 @@ export default function CalendarPage() {
 
   try {
     const supabase = getSupabaseBrowserClient();
-    const payload = {
+    const dateDebut = formatForDateInput(new Date());
+    const sharedFields = {
+     family_id: currentFamilyId,
+     frequence: collectesFrequence,
+     assignment_mode: collectesAssignmentMode,
+     heure_rappel: collectesReminderTime,
+     date_debut: dateDebut,
+     semaines_alternees: collectesFrequence === "biweekly" ? collectesSemuinesAlternees : null,
+    };
+
+    const payloadByType = [
+     {
+      ...sharedFields,
+      type: "ordures",
+      jour_semaine: Number(collectesGarbageDay),
+      nom: "Collecte ordures",
+      couleur: "#7F8C8D",
+      icone: "Trash2",
+     },
+     {
+      ...sharedFields,
+      type: "recyclage",
+      jour_semaine: Number(collectesRecyclingDay),
+      nom: "Collecte recyclage",
+      couleur: "#27AE60",
+      icone: "RefreshCw",
+     },
+     {
+      ...sharedFields,
+      type: "compost",
+      jour_semaine: Number(collectesCompostDay),
+      nom: "Collecte compost",
+      couleur: "#8B6914",
+      icone: "Leaf",
+     },
+    ];
+
+    const modernWrite = await supabase.from("collectes").upsert(payloadByType, { onConflict: "family_id,type" });
+
+    if (modernWrite.error) {
+     const legacyPayload = {
       family_id: currentFamilyId,
       garbage_day: Number(collectesGarbageDay),
       recycling_day: Number(collectesRecyclingDay),
@@ -1224,16 +1754,18 @@ export default function CalendarPage() {
       semaines_alternees: collectesFrequence === "biweekly" ? collectesSemuinesAlternees : null,
       created_by: user.id,
       updated_at: new Date().toISOString(),
-    };
+     };
 
-    const result = await supabase.from("collectes").upsert(payload, { onConflict: "family_id" });
-    if (result.error) {
-      throw new Error(result.error.message);
+     const legacyWrite = await supabase.from("collectes").upsert(legacyPayload, { onConflict: "family_id" });
+     if (legacyWrite.error) {
+      throw new Error(legacyWrite.error.message);
+     }
     }
 
     await refreshCollectes(supabase, currentFamilyId);
+    await refreshEvents(supabase, currentFamilyId);
     setCollectesFormOpen(false);
-    setToast({ message: "Configuration des collectes enregistrée.", variant: "success" });
+    setToast({ message: "✅ Collecte sauvegardée !", variant: "success" });
   } catch (saveError) {
     setCollectesError(saveError instanceof Error ? saveError.message : "Impossible d'enregistrer les collectes.");
   } finally {
@@ -1788,8 +2320,19 @@ export default function CalendarPage() {
    }, [calendarDate, collectesConfig]);
 
  const calendarDisplayEvents = useMemo<CalendarDisplayEvent[]>(() => {
-    return [...filteredEvents, ...calendarSpecialEvents, ...collecteCalendarEvents, ...taskCalendarEvents];
-   }, [calendarSpecialEvents, collecteCalendarEvents, filteredEvents, taskCalendarEvents]);
+    return [...filteredEvents, ...calendarSpecialEvents, ...collecteCalendarEvents, ...taskCalendarEvents, ...workShifts];
+   }, [calendarSpecialEvents, collecteCalendarEvents, filteredEvents, taskCalendarEvents, workShifts]);
+
+   const shiftSuggestion = useMemo(() => {
+    const now = new Date();
+    const activeShift = workShifts.find((item) => now >= item.start && now <= item.end);
+    if (!activeShift) {
+     return null;
+    }
+
+    const timeLabel = `${activeShift.start.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })} - ${activeShift.end.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })}`;
+    return `${activeShift.userLabel} travaille de ${timeLabel} -> l'autre parent est suggéré pour la récupération.`;
+   }, [workShifts]);
 
    const collectesSummary = useMemo(() => {
     if (!collectesConfig) {
@@ -2576,6 +3119,14 @@ export default function CalendarPage() {
        </button>
        <button
         type="button"
+        onClick={openShiftCreateForm}
+        disabled={isReadOnly}
+        className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3] disabled:cursor-not-allowed disabled:opacity-60"
+       >
+         💼 Mon horaire de travail
+       </button>
+       <button
+        type="button"
         onClick={onExportCalendarPdf}
         className="inline-flex items-center justify-center rounded-xl border border-[#D9D0C8] bg-white px-4 py-2 text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
        >
@@ -2720,6 +3271,13 @@ export default function CalendarPage() {
         </div>
        ))
       )}
+
+      {shiftSuggestion && (
+       <div className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3 text-sm text-[#2C2420]">
+        <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">SUGGESTION DISPONIBILITÉ ENFANT</p>
+        <p className="mt-2">{shiftSuggestion}</p>
+       </div>
+      )}
      </div>
     </div>
 
@@ -2746,10 +3304,16 @@ export default function CalendarPage() {
           ? `${event.title} · Tâche`
          : event.kind === "collecte"
           ? `${event.title} · Collecte`
+         : event.kind === "shift"
+          ? `Shift de ${event.userLabel} : ${event.start.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })}-${event.end.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })}`
           : `${event.title} · ${event.type}`
        }
        onSelectEvent={(event: CalendarDisplayEvent) => {
         setGuardDateMenu(null);
+        if (event.kind === "shift") {
+         setActiveShiftMenu(event);
+         return;
+        }
         if (event.kind === "special") {
          return;
         }
@@ -2830,12 +3394,25 @@ export default function CalendarPage() {
           },
          };
         }
-        const isParentOne = event.parent
-         ? normalizeParentRole(event.parent) === "parent1"
-         : event.ownerUserId === user?.id;
+
+        if (event.kind === "shift") {
+         return {
+          style: {
+           backgroundColor: event.color,
+           borderRadius: "10px",
+           border: "none",
+           color: "#ffffff",
+           padding: "2px 6px",
+           fontWeight: 600,
+           opacity: 0.72,
+          },
+         };
+        }
+
+        const visual = EVENT_VISUALS[event.type] ?? EVENT_VISUALS.Autre;
         return {
          style: {
-          backgroundColor: isParentOne ? "#7C6B5D" : "#6B8F71",
+          backgroundColor: visual.color,
           borderRadius: "10px",
           border: "none",
           color: "#ffffff",
@@ -2845,6 +3422,43 @@ export default function CalendarPage() {
         };
        }}
          components={{
+           event: ({ event }: { event: CalendarDisplayEvent }) => {
+            if (event.kind === "task" || event.kind === "special") {
+             return <span>{shortEventTitle(event.title)}</span>;
+            }
+
+            if (event.kind === "collecte") {
+             const iconByKind: Record<CalendarCollecteEvent["collecteKind"], LucideIcon> = {
+              garbage: Trash2,
+              recycling: RefreshCw,
+              compost: Leaf,
+             };
+             const Icon = iconByKind[event.collecteKind];
+             return (
+              <span className="inline-flex items-center gap-1">
+               <Icon size={12} />
+               <span>{shortEventTitle(event.title)}</span>
+              </span>
+             );
+            }
+
+            if (event.kind === "shift") {
+             return (
+              <span className="inline-flex items-center gap-1">
+               <Briefcase size={12} />
+               <span>{shortEventTitle(event.title)}</span>
+              </span>
+             );
+            }
+
+            const Icon = (EVENT_VISUALS[event.type] ?? EVENT_VISUALS.Autre).icon;
+            return (
+             <span className="inline-flex items-center gap-1">
+              <Icon size={12} />
+              <span>{shortEventTitle(event.title)}</span>
+             </span>
+            );
+           },
           dateCellWrapper: ({ children, value }) => {
           const dayIcons = collecteIconsByDate.get(toDateOnlyKey(value));
 
@@ -2991,6 +3605,65 @@ export default function CalendarPage() {
      </div>
     </div>
    )}
+
+    {activeShiftMenu && (
+     <div className="fixed inset-0 z-[56]" onClick={() => setActiveShiftMenu(null)}>
+      <div
+      className="absolute left-1/2 top-1/3 w-[320px] max-w-[calc(100vw-24px)] -translate-x-1/2 rounded-xl border border-[#D9D0C8] bg-white p-3 shadow-[0_14px_30px_rgba(38,78,120,0.24)]"
+      onClick={(event) => event.stopPropagation()}
+      >
+      <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">SHIFT · {activeShiftMenu.userLabel}</p>
+      <p className="mt-1 text-sm text-[#2C2420]">{activeShiftMenu.title}</p>
+      <div className="mt-2 flex flex-col gap-2">
+       <button
+        type="button"
+        onClick={() => {
+        const current = activeShiftMenu;
+        setActiveShiftMenu(null);
+        openShiftEditForm(current);
+        }}
+        className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-left text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
+       >
+        ✏️ Modifier ce shift
+       </button>
+       <button
+        type="button"
+        onClick={() => {
+        const current = activeShiftMenu;
+        setActiveShiftMenu(null);
+        openShiftOverrideForm(current);
+        }}
+        className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-left text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
+       >
+        🔄 Changer ce shift
+       </button>
+       <button
+        type="button"
+        onClick={() => {
+        const current = activeShiftMenu;
+        setActiveShiftMenu(null);
+        openShiftCreateForDay(current);
+        }}
+        className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-left text-sm font-semibold text-[#6B5D55] transition hover:bg-[#EDE8E3]"
+       >
+        ➕ Ajouter un shift ce jour
+       </button>
+       <button
+        type="button"
+        onClick={() => {
+        setShiftEditMode("edit");
+        setShiftTargetId(activeShiftMenu.sourceShiftId);
+        setActiveShiftMenu(null);
+        setShiftFormOpen(true);
+        }}
+        className="rounded-lg border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-left text-sm font-semibold text-[#A85C52] transition hover:bg-[#FFECEF]"
+       >
+        🗑️ Supprimer
+       </button>
+      </div>
+      </div>
+     </div>
+    )}
 
    {formOpen && (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
@@ -3362,6 +4035,225 @@ export default function CalendarPage() {
      </div>
     </div>
    )}
+
+     {shiftFormOpen && (
+      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+        <div className="mb-4 flex items-center justify-between">
+         <h2 className="text-xl font-semibold text-[#2C2420]">💼 Mon horaire de travail</h2>
+         <button
+          type="button"
+          onClick={closeShiftForm}
+          className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
+         >
+          <X size={14} />
+         </button>
+        </div>
+
+        {shiftError && (
+         <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm text-[#A85C52]">
+          {shiftError}
+         </p>
+        )}
+
+        <form className="space-y-4" onSubmit={onSaveShift}>
+         <div>
+          <label htmlFor="shiftTitle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Titre</label>
+          <input
+           id="shiftTitle"
+           type="text"
+           value={shiftTitle}
+           onChange={(event) => setShiftTitle(event.target.value)}
+           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+           placeholder="Ex: Shift hôpital"
+          />
+         </div>
+
+         <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+           <label htmlFor="shiftType" className="mb-1 block text-sm font-medium text-[#6B5D55]">Type de shift</label>
+           <select
+            id="shiftType"
+            value={shiftType}
+            onChange={(event) => setShiftType(event.target.value as WorkShiftType)}
+            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+           >
+            <option value="jour">{SHIFT_PRESETS.jour.label}</option>
+            <option value="soir">{SHIFT_PRESETS.soir.label}</option>
+            <option value="nuit">{SHIFT_PRESETS.nuit.label}</option>
+            <option value="personnalise">Personnalisé</option>
+           </select>
+          </div>
+          <div>
+           <label htmlFor="shiftColor" className="mb-1 block text-sm font-medium text-[#6B5D55]">Couleur du shift</label>
+           <input
+            id="shiftColor"
+            type="color"
+            value={shiftColor}
+            onChange={(event) => setShiftColor(event.target.value)}
+            className="h-[44px] w-full rounded-xl border border-[#D9D0C8] px-2 py-1"
+           />
+          </div>
+         </div>
+
+         <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+           <label htmlFor="shiftStartAt" className="mb-1 block text-sm font-medium text-[#6B5D55]">Heure début</label>
+           <input
+            id="shiftStartAt"
+            type="datetime-local"
+            value={shiftStartAt}
+            onChange={(event) => setShiftStartAt(event.target.value)}
+            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+           />
+          </div>
+          <div>
+           <label htmlFor="shiftEndAt" className="mb-1 block text-sm font-medium text-[#6B5D55]">Heure fin</label>
+           <input
+            id="shiftEndAt"
+            type="datetime-local"
+            value={shiftEndAt}
+            onChange={(event) => setShiftEndAt(event.target.value)}
+            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+           />
+          </div>
+         </div>
+
+         <div>
+          <label htmlFor="shiftLocation" className="mb-1 block text-sm font-medium text-[#6B5D55]">Lieu (optionnel)</label>
+          <input
+           id="shiftLocation"
+           type="text"
+           value={shiftLocation}
+           onChange={(event) => setShiftLocation(event.target.value)}
+           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+           placeholder="Ex: Hôpital, Bureau"
+          />
+         </div>
+
+         <section className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
+          <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">RÉCURRENCE</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+           <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
+            <input type="radio" checked={shiftRecurrenceMode === "once"} onChange={() => setShiftRecurrenceMode("once")} />
+            Une seule fois
+           </label>
+           <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
+            <input type="radio" checked={shiftRecurrenceMode === "recurring"} onChange={() => setShiftRecurrenceMode("recurring")} />
+            Récurrent
+           </label>
+          </div>
+
+          {shiftRecurrenceMode === "recurring" && (
+           <div className="mt-3 space-y-3">
+            <div className="flex flex-wrap gap-2">
+             {WEEKDAY_OPTIONS.map((day) => (
+              <label key={`shift-day-${day.jsDay}`} className="inline-flex items-center gap-2 rounded-lg border border-[#D9D0C8] bg-white px-2 py-1 text-xs text-[#6B5D55]">
+               <input
+                type="checkbox"
+                checked={Boolean(shiftRecurrenceDays[day.jsDay])}
+                onChange={(event) =>
+                 setShiftRecurrenceDays((current) => ({
+                  ...current,
+                  [day.jsDay]: event.target.checked,
+                 }))
+                }
+               />
+               {day.label.slice(0, 3)}
+              </label>
+             ))}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+             <div>
+              <label htmlFor="shiftRecurrenceStart" className="mb-1 block text-sm font-medium text-[#6B5D55]">Du</label>
+              <input
+               id="shiftRecurrenceStart"
+               type="date"
+               value={shiftRecurrenceStart}
+               onChange={(event) => setShiftRecurrenceStart(event.target.value)}
+               className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+              />
+             </div>
+             <div>
+              <label htmlFor="shiftRecurrenceEnd" className="mb-1 block text-sm font-medium text-[#6B5D55]">Au (optionnel)</label>
+              <input
+               id="shiftRecurrenceEnd"
+               type="date"
+               value={shiftRecurrenceEnd}
+               onChange={(event) => setShiftRecurrenceEnd(event.target.value)}
+               className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+              />
+             </div>
+            </div>
+
+            <div>
+             <label htmlFor="shiftFrequency" className="mb-1 block text-sm font-medium text-[#6B5D55]">Fréquence</label>
+             <select
+              id="shiftFrequency"
+              value={shiftFrequency}
+              onChange={(event) => setShiftFrequency(event.target.value as WorkShiftFrequency)}
+              className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+             >
+              <option value="weekly">Chaque semaine</option>
+              <option value="biweekly">Aux 2 semaines</option>
+              <option value="custom">Personnalisé</option>
+             </select>
+            </div>
+           </div>
+          )}
+         </section>
+
+         {(shiftEditMode === "override" || shiftEditMode === "edit") && (
+          <section className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
+           <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">CHANGEMENT DE SHIFT</p>
+           <div className="mt-2 space-y-3">
+            <div>
+             <label htmlFor="shiftReason" className="mb-1 block text-sm font-medium text-[#6B5D55]">Raison du changement (optionnel)</label>
+             <input
+              id="shiftReason"
+              type="text"
+              value={shiftReason}
+              onChange={(event) => setShiftReason(event.target.value)}
+              className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+              placeholder="Ex: rendez-vous, échange collègue"
+             />
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
+             <input
+              type="checkbox"
+              checked={shiftNotifyCoparent}
+              onChange={(event) => setShiftNotifyCoparent(event.target.checked)}
+             />
+             Notifier le co-parent
+            </label>
+           </div>
+          </section>
+         )}
+
+         <div className="mt-2 flex gap-2">
+          <button
+           type="submit"
+           disabled={isSavingShift || isDeletingShift}
+           className="flex-1 rounded-xl bg-[#2C3E50] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+          >
+           {isSavingShift ? "Sauvegarde..." : "Sauvegarder le shift"}
+          </button>
+          {shiftEditMode !== "create" && (
+           <button
+            type="button"
+            onClick={onDeleteShift}
+            disabled={isSavingShift || isDeletingShift}
+            className="flex-1 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm font-semibold text-[#A85C52] disabled:cursor-not-allowed disabled:opacity-70"
+           >
+            {isDeletingShift ? "Suppression..." : "🗑️ Supprimer"}
+           </button>
+          )}
+         </div>
+        </form>
+       </div>
+      </div>
+     )}
 
     {collectesFormOpen && (
      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">

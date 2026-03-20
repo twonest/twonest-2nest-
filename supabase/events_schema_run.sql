@@ -5,7 +5,7 @@ create table if not exists public.events (
   family_id uuid references public.families(id) on delete cascade,
   user_id uuid references auth.users(id) on delete cascade,
   title text not null,
-  type text not null check (type in ('Garde', 'Médecin', 'École', 'Activité', 'Épicerie', 'Poubelles/Recyclage', 'Planification des repas', 'Entretien maison', 'Formulaire à signer')),
+  type text not null check (type in ('Garde', 'Médecin', 'École', 'Activité', 'Épicerie', 'Ordures', 'Recyclage', 'Compost', 'Shift travail', 'Changement shift', 'Autre', 'Poubelles/Recyclage', 'Planification des repas', 'Entretien maison', 'Formulaire à signer')),
   start_at timestamptz not null,
   end_at timestamptz not null,
   parent text not null default 'parent1' check (parent in ('parent1', 'parent2')),
@@ -122,7 +122,7 @@ alter table public.events
 drop constraint if exists events_type_check;
 
 alter table public.events
-add constraint events_type_check check (type in ('Garde', 'Médecin', 'École', 'Activité', 'Épicerie', 'Poubelles/Recyclage', 'Planification des repas', 'Entretien maison', 'Formulaire à signer'));
+add constraint events_type_check check (type in ('Garde', 'Médecin', 'École', 'Activité', 'Épicerie', 'Ordures', 'Recyclage', 'Compost', 'Shift travail', 'Changement shift', 'Autre', 'Poubelles/Recyclage', 'Planification des repas', 'Entretien maison', 'Formulaire à signer'));
 
 alter table public.events
 drop constraint if exists events_parent_check;
