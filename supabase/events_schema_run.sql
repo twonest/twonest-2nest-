@@ -109,6 +109,31 @@ update public.events
 set type = 'Activité'
 where type is null;
 
+update public.events
+set type = 'Autre'
+where type not in (
+  'Garde',
+  'Médecin',
+  'École',
+  'Activité',
+  'Épicerie',
+  'Ordures',
+  'Recyclage',
+  'Compost',
+  'Shift travail',
+  'Changement shift',
+  'Autre',
+  'Poubelles/Recyclage',
+  'Planification des repas',
+  'Entretien maison',
+  'Formulaire à signer'
+);
+
+update public.events
+set parent = 'parent1'
+where parent is not null
+  and parent not in ('parent1', 'parent2');
+
 alter table public.events
 alter column parent set default 'parent1';
 

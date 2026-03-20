@@ -27,6 +27,171 @@ create table if not exists public.work_shifts (
   constraint work_shifts_end_after_start check (end_at > start_at)
 );
 
+alter table if exists public.work_shifts
+add column if not exists family_id uuid references public.families(id) on delete cascade;
+
+alter table if exists public.work_shifts
+add column if not exists user_id uuid references auth.users(id) on delete cascade;
+
+alter table if exists public.work_shifts
+add column if not exists title text;
+
+alter table if exists public.work_shifts
+add column if not exists shift_type text;
+
+alter table if exists public.work_shifts
+add column if not exists start_at timestamptz;
+
+alter table if exists public.work_shifts
+add column if not exists end_at timestamptz;
+
+alter table if exists public.work_shifts
+add column if not exists location text;
+
+alter table if exists public.work_shifts
+add column if not exists color text;
+
+alter table if exists public.work_shifts
+add column if not exists recurrence_mode text;
+
+alter table if exists public.work_shifts
+add column if not exists recurrence_days smallint[];
+
+alter table if exists public.work_shifts
+add column if not exists recurrence_start date;
+
+alter table if exists public.work_shifts
+add column if not exists recurrence_end date;
+
+alter table if exists public.work_shifts
+add column if not exists frequency text;
+
+alter table if exists public.work_shifts
+add column if not exists is_override boolean;
+
+alter table if exists public.work_shifts
+add column if not exists base_shift_id uuid references public.work_shifts(id) on delete set null;
+
+alter table if exists public.work_shifts
+add column if not exists reason text;
+
+alter table if exists public.work_shifts
+add column if not exists notify_coparent boolean;
+
+alter table if exists public.work_shifts
+add column if not exists created_at timestamptz;
+
+alter table if exists public.work_shifts
+add column if not exists updated_at timestamptz;
+
+update public.work_shifts
+set title = coalesce(nullif(title, ''), 'Shift travail')
+where title is null or title = '';
+
+update public.work_shifts
+set shift_type = 'jour'
+where shift_type is null;
+
+update public.work_shifts
+set color = '#2C3E50'
+where color is null;
+
+update public.work_shifts
+set recurrence_mode = 'once'
+where recurrence_mode is null;
+
+update public.work_shifts
+set is_override = false
+where is_override is null;
+
+update public.work_shifts
+set notify_coparent = false
+where notify_coparent is null;
+
+update public.work_shifts
+set created_at = now()
+where created_at is null;
+
+update public.work_shifts
+set updated_at = now()
+where updated_at is null;
+
+alter table public.work_shifts
+alter column title set not null;
+
+alter table public.work_shifts
+alter column shift_type set not null;
+
+alter table public.work_shifts
+alter column color set not null;
+
+alter table public.work_shifts
+alter column recurrence_mode set not null;
+
+alter table public.work_shifts
+alter column is_override set not null;
+
+alter table public.work_shifts
+alter column notify_coparent set not null;
+
+alter table public.work_shifts
+alter column created_at set not null;
+
+alter table public.work_shifts
+alter column updated_at set not null;
+
+alter table public.work_shifts
+alter column shift_type set default 'jour';
+
+alter table public.work_shifts
+alter column color set default '#2C3E50';
+
+alter table public.work_shifts
+alter column recurrence_mode set default 'once';
+
+alter table public.work_shifts
+alter column is_override set default false;
+
+alter table public.work_shifts
+alter column notify_coparent set default false;
+
+alter table public.work_shifts
+alter column created_at set default now();
+
+alter table public.work_shifts
+alter column updated_at set default now();
+
+alter table public.work_shifts
+drop constraint if exists work_shifts_shift_type_check;
+
+alter table public.work_shifts
+add constraint work_shifts_shift_type_check check (shift_type in ('jour', 'soir', 'nuit', 'personnalise'));
+
+alter table public.work_shifts
+drop constraint if exists work_shifts_recurrence_mode_check;
+
+alter table public.work_shifts
+add constraint work_shifts_recurrence_mode_check check (recurrence_mode in ('once', 'recurring'));
+
+alter table public.work_shifts
+drop constraint if exists work_shifts_frequency_check;
+
+alter table public.work_shifts
+add constraint work_shifts_frequency_check check (frequency in ('weekly', 'biweekly', 'custom') or frequency is null);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'work_shifts_end_after_start'
+      and conrelid = 'public.work_shifts'::regclass
+  ) then
+    execute 'alter table public.work_shifts add constraint work_shifts_end_after_start check (end_at > start_at)';
+  end if;
+end;
+$$;
+
 create index if not exists work_shifts_family_idx on public.work_shifts(family_id);
 create index if not exists work_shifts_user_idx on public.work_shifts(user_id);
 create index if not exists work_shifts_start_idx on public.work_shifts(start_at);
