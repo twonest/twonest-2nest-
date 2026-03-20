@@ -136,6 +136,7 @@ type CalendarCollecteEvent = {
 
 type WorkShiftType = "jour" | "soir" | "nuit" | "personnalise";
 type WorkShiftFrequency = "weekly" | "biweekly" | "custom";
+type WorkShiftScheduleMode = "once" | "weekly" | "cycle";
 type WorkShiftRecurrence = "once" | "recurring";
 
 type WorkShiftRow = {
@@ -157,6 +158,7 @@ type WorkShiftRow = {
  base_shift_id?: string | null;
  reason?: string | null;
  notify_coparent?: boolean | null;
+ cycle_length_days?: number | null;
  created_at?: string;
  updated_at?: string;
 };
@@ -177,6 +179,12 @@ type CalendarWorkShiftEvent = {
  reason: string | null;
  notifyCoparent: boolean;
  sourceShiftId: string;
+ recurrenceMode: WorkShiftRecurrence;
+ frequency: WorkShiftFrequency | null;
+ recurrenceDays: number[];
+ recurrenceStart: string | null;
+ recurrenceEnd: string | null;
+ cycleLengthDays: number | null;
 };
 
 type CalendarDisplayEvent =
@@ -434,6 +442,28 @@ function isWorkShiftSchemaMissing(message: string): boolean {
  return missingObject && normalized.includes("work_shifts");
 }
 
+function dateRangesOverlap(startA: Date, endA: Date, startB: Date, endB: Date): boolean {
+ return startA < endB && endA > startB;
+}
+
+function applyTimeFromTemplate(targetDate: Date, template: Date): Date {
+ const next = new Date(targetDate);
+ next.setHours(template.getHours(), template.getMinutes(), 0, 0);
+ return next;
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+ const normalized = hex.replace("#", "");
+ if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+  return `rgba(44, 36, 32, ${alpha})`;
+ }
+
+ const red = Number.parseInt(normalized.slice(0, 2), 16);
+ const green = Number.parseInt(normalized.slice(2, 4), 16);
+ const blue = Number.parseInt(normalized.slice(4, 6), 16);
+ return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
 function listDateKeysBetween(start: Date, end: Date): string[] {
  const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
@@ -654,7 +684,8 @@ export default function CalendarPage() {
  const [collectesRecyclingCycle, setCollectesRecyclingCycle] = useState<"weekly" | "A" | "B">("weekly");
  const [collectesCompostCycle, setCollectesCompostCycle] = useState<"weekly" | "A" | "B">("weekly");
  const [isSavingCollectes, setIsSavingCollectes] = useState(false);
- const [workShifts, setWorkShifts] = useState<CalendarWorkShiftEvent[]>([]);
+ const [workShiftRows, setWorkShiftRows] = useState<WorkShiftRow[]>([]);
+ const [workShiftNamesByUserId, setWorkShiftNamesByUserId] = useState<Record<string, string>>({});
  const [shiftFormOpen, setShiftFormOpen] = useState(false);
  const [shiftEditMode, setShiftEditMode] = useState<"create" | "edit" | "override">("create");
  const [shiftTargetId, setShiftTargetId] = useState("");
@@ -665,10 +696,12 @@ export default function CalendarPage() {
  const [shiftLocation, setShiftLocation] = useState("");
  const [shiftColor, setShiftColor] = useState("#2C3E50");
  const [shiftRecurrenceMode, setShiftRecurrenceMode] = useState<WorkShiftRecurrence>("once");
+ const [shiftScheduleMode, setShiftScheduleMode] = useState<WorkShiftScheduleMode>("once");
  const [shiftRecurrenceDays, setShiftRecurrenceDays] = useState<Record<number, boolean>>({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false });
  const [shiftRecurrenceStart, setShiftRecurrenceStart] = useState(() => formatForDateInput(new Date()));
  const [shiftRecurrenceEnd, setShiftRecurrenceEnd] = useState("");
  const [shiftFrequency, setShiftFrequency] = useState<WorkShiftFrequency>("weekly");
+ const [shiftCycleLengthDays, setShiftCycleLengthDays] = useState("35");
  const [shiftReason, setShiftReason] = useState("");
  const [shiftNotifyCoparent, setShiftNotifyCoparent] = useState(true);
  const [shiftError, setShiftError] = useState("");
@@ -993,15 +1026,29 @@ export default function CalendarPage() {
 
    const refreshWorkShifts = async (client = getSupabaseBrowserClient(), familyId?: string | null) => {
     if (!familyId) {
-    setWorkShifts([]);
+      setWorkShiftRows([]);
+      setWorkShiftNamesByUserId({});
     return;
     }
 
-    const { data, error } = await client
+    const query = await client
     .from("work_shifts")
-    .select("id, family_id, user_id, title, shift_type, start_at, end_at, location, color, recurrence_mode, recurrence_days, recurrence_start, recurrence_end, frequency, is_override, base_shift_id, reason, notify_coparent")
+    .select("id, family_id, user_id, title, shift_type, start_at, end_at, location, color, recurrence_mode, recurrence_days, recurrence_start, recurrence_end, frequency, is_override, base_shift_id, reason, notify_coparent, cycle_length_days")
     .eq("family_id", familyId)
     .order("start_at", { ascending: true });
+
+    let data: WorkShiftRow[] | null = (query.data as WorkShiftRow[] | null) ?? null;
+    let error = query.error;
+
+    if (error && error.message.toLowerCase().includes("cycle_length_days")) {
+     const fallback = await client
+      .from("work_shifts")
+      .select("id, family_id, user_id, title, shift_type, start_at, end_at, location, color, recurrence_mode, recurrence_days, recurrence_start, recurrence_end, frequency, is_override, base_shift_id, reason, notify_coparent")
+      .eq("family_id", familyId)
+      .order("start_at", { ascending: true });
+    data = (fallback.data as WorkShiftRow[] | null) ?? null;
+     error = fallback.error;
+    }
 
     if (error) {
     if (isWorkShiftSchemaMissing(error.message)) {
@@ -1029,41 +1076,8 @@ export default function CalendarPage() {
     }
     }
 
-    const mapped = rows
-    .map((row): CalendarWorkShiftEvent | null => {
-     const id = row.id ? String(row.id) : "";
-     const userId = typeof row.user_id === "string" ? row.user_id : "";
-     const startDate = parseIsoDate(row.start_at);
-     const endDate = parseIsoDate(row.end_at);
-     if (!id || !userId || !startDate || !endDate) {
-      return null;
-     }
-
-     const shiftTypeValue: WorkShiftType =
-      row.shift_type === "soir" || row.shift_type === "nuit" || row.shift_type === "personnalise"
-       ? row.shift_type
-       : "jour";
-
-     return {
-      id: `shift-${id}`,
-      sourceShiftId: id,
-      title: typeof row.title === "string" && row.title.trim().length > 0 ? row.title.trim() : "Shift travail",
-      start: startDate,
-      end: endDate,
-      kind: "shift",
-      shiftType: shiftTypeValue,
-      userId,
-      userLabel: namesByUserId[userId] ?? "Parent",
-      location: typeof row.location === "string" ? row.location : null,
-      color: typeof row.color === "string" && row.color.trim().length > 0 ? row.color : "#2C3E50",
-      isOverride: Boolean(row.is_override),
-      reason: typeof row.reason === "string" ? row.reason : null,
-      notifyCoparent: Boolean(row.notify_coparent),
-     };
-    })
-    .filter((item): item is CalendarWorkShiftEvent => item !== null);
-
-    setWorkShifts(mapped);
+    setWorkShiftNamesByUserId(namesByUserId);
+    setWorkShiftRows(rows);
    };
 
    const getISOWeekNumber = (date: Date): number => {
@@ -1514,10 +1528,12 @@ export default function CalendarPage() {
   setShiftLocation("");
   setShiftColor("#2C3E50");
   setShiftRecurrenceMode("once");
+    setShiftScheduleMode("once");
   setShiftRecurrenceDays({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false });
   setShiftRecurrenceStart(formatForDateInput(now));
   setShiftRecurrenceEnd("");
   setShiftFrequency("weekly");
+    setShiftCycleLengthDays("35");
   setShiftReason("");
   setShiftNotifyCoparent(true);
   setShiftError("");
@@ -1537,17 +1553,33 @@ export default function CalendarPage() {
   }
   setShiftEditMode("edit");
   setShiftTargetId(shift.sourceShiftId);
+    const rawShift = workShiftRows.find((item) => String(item.id ?? "") === shift.sourceShiftId);
   setShiftTitle(shift.title);
   setShiftType(shift.shiftType);
   setShiftStartAt(formatForDateTimeLocal(shift.start));
   setShiftEndAt(formatForDateTimeLocal(shift.end));
   setShiftLocation(shift.location ?? "");
   setShiftColor(shift.color);
-  setShiftRecurrenceMode("once");
-  setShiftRecurrenceDays({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false });
-  setShiftRecurrenceStart(formatForDateInput(shift.start));
-  setShiftRecurrenceEnd("");
-  setShiftFrequency("weekly");
+    const recurrenceMode = rawShift?.recurrence_mode === "recurring" ? "recurring" : "once";
+    const recurrenceDays = Array.isArray(rawShift?.recurrence_days)
+     ? rawShift.recurrence_days.reduce<Record<number, boolean>>((accumulator, value) => {
+        accumulator[Number(value) % 7] = true;
+        return accumulator;
+       }, { 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false })
+     : { 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false };
+    setShiftRecurrenceMode(recurrenceMode);
+    setShiftScheduleMode(
+     recurrenceMode !== "recurring"
+      ? "once"
+      : rawShift?.frequency === "custom"
+       ? "cycle"
+       : "weekly",
+    );
+    setShiftRecurrenceDays(recurrenceDays);
+    setShiftRecurrenceStart(typeof rawShift?.recurrence_start === "string" ? rawShift.recurrence_start : formatForDateInput(shift.start));
+    setShiftRecurrenceEnd(typeof rawShift?.recurrence_end === "string" ? rawShift.recurrence_end : "");
+    setShiftFrequency(rawShift?.frequency === "biweekly" || rawShift?.frequency === "custom" ? rawShift.frequency : "weekly");
+    setShiftCycleLengthDays(typeof rawShift?.cycle_length_days === "number" && rawShift.cycle_length_days > 0 ? String(rawShift.cycle_length_days) : "35");
   setShiftReason(shift.reason ?? "");
   setShiftNotifyCoparent(shift.notifyCoparent);
   setShiftError("");
@@ -1567,10 +1599,12 @@ export default function CalendarPage() {
   setShiftLocation(shift.location ?? "");
   setShiftColor("#E67E22");
   setShiftRecurrenceMode("once");
+  setShiftScheduleMode("once");
   setShiftRecurrenceDays({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 0: false });
   setShiftRecurrenceStart(formatForDateInput(shift.start));
   setShiftRecurrenceEnd("");
   setShiftFrequency("weekly");
+  setShiftCycleLengthDays("35");
   setShiftReason("");
   setShiftNotifyCoparent(true);
   setShiftError("");
@@ -1639,6 +1673,21 @@ export default function CalendarPage() {
 
   try {
   const supabase = getSupabaseBrowserClient();
+  const cycleLengthValue = Number(shiftCycleLengthDays);
+  if (shiftScheduleMode === "cycle" && (!Number.isInteger(cycleLengthValue) || cycleLengthValue <= 0)) {
+   setShiftError("Le cycle doit être un nombre de jours valide.");
+   return;
+  }
+
+  const weeklyDays = Object.entries(shiftRecurrenceDays)
+   .filter(([, checked]) => checked)
+   .map(([day]) => weekdayJsToIso(Number(day)));
+
+  if (shiftScheduleMode === "weekly" && weeklyDays.length === 0) {
+   setShiftError("Choisis au moins un jour pour l'horaire normal.");
+   return;
+  }
+
   const basePayload: Record<string, unknown> = {
    family_id: currentFamilyId,
    user_id: user.id,
@@ -1648,29 +1697,36 @@ export default function CalendarPage() {
    end_at: endDate.toISOString(),
    location: shiftLocation.trim() || null,
    color: shiftColor,
-   recurrence_mode: shiftRecurrenceMode,
-   recurrence_days:
-    shiftRecurrenceMode === "recurring"
-    ? Object.entries(shiftRecurrenceDays)
-      .filter(([, checked]) => checked)
-      .map(([day]) => weekdayJsToIso(Number(day)))
-    : null,
-   recurrence_start: shiftRecurrenceMode === "recurring" ? shiftRecurrenceStart : null,
-   recurrence_end: shiftRecurrenceMode === "recurring" && shiftRecurrenceEnd ? shiftRecurrenceEnd : null,
-   frequency: shiftRecurrenceMode === "recurring" ? shiftFrequency : null,
+   recurrence_mode: shiftScheduleMode === "once" ? "once" : "recurring",
+   recurrence_days: shiftScheduleMode === "weekly" ? weeklyDays : null,
+   recurrence_start: shiftScheduleMode === "once" ? null : shiftRecurrenceStart,
+   recurrence_end: shiftScheduleMode !== "once" && shiftRecurrenceEnd ? shiftRecurrenceEnd : null,
+   frequency: shiftScheduleMode === "weekly" ? "weekly" : shiftScheduleMode === "cycle" ? "custom" : null,
+   cycle_length_days: shiftScheduleMode === "cycle" ? cycleLengthValue : null,
    is_override: shiftEditMode === "override",
    base_shift_id: shiftEditMode === "override" ? shiftTargetId : null,
    reason: shiftReason.trim() || null,
    notify_coparent: shiftNotifyCoparent,
   };
 
+  const persistPayloadWithoutCycle = () => {
+   const { cycle_length_days: _ignoredCycleLengthDays, ...rest } = basePayload;
+   return rest;
+  };
+
   if (shiftEditMode === "edit" && shiftTargetId) {
-   const update = await supabase.from("work_shifts").update(basePayload).eq("id", shiftTargetId);
+   let update = await supabase.from("work_shifts").update(basePayload).eq("id", shiftTargetId);
+   if (update.error && update.error.message.toLowerCase().includes("cycle_length_days")) {
+    update = await supabase.from("work_shifts").update(persistPayloadWithoutCycle()).eq("id", shiftTargetId);
+   }
    if (update.error) {
     throw new Error(update.error.message);
    }
   } else {
-   const insert = await supabase.from("work_shifts").insert(basePayload);
+   let insert = await supabase.from("work_shifts").insert(basePayload);
+   if (insert.error && insert.error.message.toLowerCase().includes("cycle_length_days")) {
+    insert = await supabase.from("work_shifts").insert(persistPayloadWithoutCycle());
+   }
    if (insert.error) {
     throw new Error(insert.error.message);
    }
@@ -2289,7 +2345,11 @@ export default function CalendarPage() {
      const dayEnd = new Date(dayStart);
      dayEnd.setDate(dayEnd.getDate() + 1);
 
-     if (collectesConfig.garbageDay !== null && cursor.getDay() === collectesConfig.garbageDay) {
+       if (
+        collectesConfig.garbageDay !== null &&
+        cursor.getDay() === collectesConfig.garbageDay &&
+        shouldCollectOnDate(cursor, collectesConfig.garbageCycle)
+       ) {
       eventsList.push({
        id: `collecte-garbage-${toDateOnlyKey(dayStart)}`,
        title: `${COLLECTE_STYLE.garbage.icon} Collecte ${COLLECTE_STYLE.garbage.label.toLowerCase()}`,
@@ -2301,7 +2361,11 @@ export default function CalendarPage() {
       });
      }
 
-     if (collectesConfig.recyclingDay !== null && cursor.getDay() === collectesConfig.recyclingDay) {
+    if (
+     collectesConfig.recyclingDay !== null &&
+     cursor.getDay() === collectesConfig.recyclingDay &&
+     shouldCollectOnDate(cursor, collectesConfig.recyclingCycle)
+    ) {
       eventsList.push({
        id: `collecte-recycling-${toDateOnlyKey(dayStart)}`,
        title: `${COLLECTE_STYLE.recycling.icon} Collecte ${COLLECTE_STYLE.recycling.label.toLowerCase()}`,
@@ -2313,7 +2377,11 @@ export default function CalendarPage() {
       });
      }
 
-     if (collectesConfig.compostDay !== null && cursor.getDay() === collectesConfig.compostDay) {
+    if (
+     collectesConfig.compostDay !== null &&
+     cursor.getDay() === collectesConfig.compostDay &&
+     shouldCollectOnDate(cursor, collectesConfig.compostCycle)
+    ) {
       eventsList.push({
        id: `collecte-compost-${toDateOnlyKey(dayStart)}`,
        title: `${COLLECTE_STYLE.compost.icon} Collecte ${COLLECTE_STYLE.compost.label.toLowerCase()}`,
@@ -2330,6 +2398,106 @@ export default function CalendarPage() {
 
     return eventsList;
    }, [calendarDate, collectesConfig]);
+
+   const workShifts = useMemo<CalendarWorkShiftEvent[]>(() => {
+    if (workShiftRows.length === 0) {
+     return [];
+    }
+
+    const visibleStart = new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1, 0, 0, 0, 0);
+    const visibleEnd = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 2, 0, 23, 59, 59, 999);
+    const eventsList: CalendarWorkShiftEvent[] = [];
+
+    for (const row of workShiftRows) {
+     const id = row.id ? String(row.id) : "";
+     const userId = typeof row.user_id === "string" ? row.user_id : "";
+     const templateStart = parseIsoDate(row.start_at);
+     const templateEnd = parseIsoDate(row.end_at);
+     if (!id || !userId || !templateStart || !templateEnd) {
+      continue;
+     }
+
+     const title = typeof row.title === "string" && row.title.trim().length > 0 ? row.title.trim() : "Shift travail";
+     const shiftTypeValue: WorkShiftType =
+      row.shift_type === "soir" || row.shift_type === "nuit" || row.shift_type === "personnalise"
+       ? row.shift_type
+       : "jour";
+     const recurrenceMode: WorkShiftRecurrence = row.recurrence_mode === "recurring" ? "recurring" : "once";
+     const frequency: WorkShiftFrequency | null =
+      row.frequency === "weekly" || row.frequency === "biweekly" || row.frequency === "custom" ? row.frequency : null;
+     const recurrenceDays = Array.isArray(row.recurrence_days)
+      ? row.recurrence_days.map((value) => Number(value)).filter((value) => Number.isInteger(value))
+      : [];
+     const recurrenceStart = typeof row.recurrence_start === "string" ? row.recurrence_start : null;
+     const recurrenceEnd = typeof row.recurrence_end === "string" ? row.recurrence_end : null;
+     const cycleLengthDays = typeof row.cycle_length_days === "number" ? row.cycle_length_days : null;
+     const durationMs = templateEnd.getTime() - templateStart.getTime();
+
+     const pushOccurrence = (occurrenceStart: Date, suffix: string) => {
+      const occurrenceEnd = new Date(occurrenceStart.getTime() + durationMs);
+      if (!dateRangesOverlap(occurrenceStart, occurrenceEnd, visibleStart, visibleEnd)) {
+       return;
+      }
+
+      eventsList.push({
+       id: `shift-${id}-${suffix}`,
+       sourceShiftId: id,
+       title,
+       start: occurrenceStart,
+       end: occurrenceEnd,
+       kind: "shift",
+       shiftType: shiftTypeValue,
+       userId,
+       userLabel: workShiftNamesByUserId[userId] ?? "Parent",
+       location: typeof row.location === "string" ? row.location : null,
+       color: typeof row.color === "string" && row.color.trim().length > 0 ? row.color : "#2C3E50",
+       isOverride: Boolean(row.is_override),
+       reason: typeof row.reason === "string" ? row.reason : null,
+       notifyCoparent: Boolean(row.notify_coparent),
+       recurrenceMode,
+       frequency,
+       recurrenceDays,
+       recurrenceStart,
+       recurrenceEnd,
+       cycleLengthDays,
+      });
+     };
+
+     if (recurrenceMode !== "recurring") {
+      pushOccurrence(templateStart, toDateOnlyKey(templateStart));
+      continue;
+     }
+
+     const anchorDate = recurrenceStart ? new Date(`${recurrenceStart}T00:00:00`) : new Date(templateStart.getFullYear(), templateStart.getMonth(), templateStart.getDate());
+     const recurrenceEndDate = recurrenceEnd ? new Date(`${recurrenceEnd}T23:59:59`) : visibleEnd;
+
+     if (frequency === "custom" && cycleLengthDays && cycleLengthDays > 0) {
+      const cursor = new Date(anchorDate);
+      while (cursor <= recurrenceEndDate && cursor <= visibleEnd) {
+       const occurrenceStart = applyTimeFromTemplate(cursor, templateStart);
+       pushOccurrence(occurrenceStart, toDateOnlyKey(occurrenceStart));
+       cursor.setDate(cursor.getDate() + cycleLengthDays);
+      }
+      continue;
+     }
+
+     const cursor = new Date(Math.max(anchorDate.getTime(), visibleStart.getTime()));
+     cursor.setHours(0, 0, 0, 0);
+     while (cursor <= recurrenceEndDate && cursor <= visibleEnd) {
+      const isoWeekday = weekdayJsToIso(cursor.getDay());
+      const matchesDay = recurrenceDays.length === 0 ? isoWeekday === weekdayJsToIso(templateStart.getDay()) : recurrenceDays.includes(isoWeekday);
+      const weekDelta = Math.floor((toUtcDayMs(cursor) - toUtcDayMs(anchorDate)) / (7 * 24 * 60 * 60 * 1000));
+      const matchesFrequency = frequency === "biweekly" ? weekDelta % 2 === 0 : true;
+      if (matchesDay && matchesFrequency) {
+       const occurrenceStart = applyTimeFromTemplate(cursor, templateStart);
+       pushOccurrence(occurrenceStart, toDateOnlyKey(occurrenceStart));
+      }
+      cursor.setDate(cursor.getDate() + 1);
+     }
+    }
+
+    return eventsList.sort((left, right) => left.start.getTime() - right.start.getTime());
+   }, [calendarDate, workShiftNamesByUserId, workShiftRows]);
 
  const calendarDisplayEvents = useMemo<CalendarDisplayEvent[]>(() => {
     return [...filteredEvents, ...calendarSpecialEvents, ...collecteCalendarEvents, ...taskCalendarEvents, ...workShifts];
@@ -2472,13 +2640,13 @@ export default function CalendarPage() {
    const dateKey = toDateOnlyKey(cursor);
    const iconList: Array<{ icon: string; color: string }> = [];
 
-   if (collectesConfig.garbageDay !== null && cursor.getDay() === collectesConfig.garbageDay) {
+   if (collectesConfig.garbageDay !== null && cursor.getDay() === collectesConfig.garbageDay && shouldCollectOnDate(cursor, collectesConfig.garbageCycle)) {
     iconList.push({ icon: "🗑️", color: "#6F6F6F" });
    }
-   if (collectesConfig.recyclingDay !== null && cursor.getDay() === collectesConfig.recyclingDay) {
+   if (collectesConfig.recyclingDay !== null && cursor.getDay() === collectesConfig.recyclingDay && shouldCollectOnDate(cursor, collectesConfig.recyclingCycle)) {
     iconList.push({ icon: "♻️", color: "#3D88CE" });
    }
-   if (collectesConfig.compostDay !== null && cursor.getDay() === collectesConfig.compostDay) {
+   if (collectesConfig.compostDay !== null && cursor.getDay() === collectesConfig.compostDay && shouldCollectOnDate(cursor, collectesConfig.compostCycle)) {
     iconList.push({ icon: "🌱", color: "#4C9B5C" });
    }
 
@@ -3311,6 +3479,19 @@ export default function CalendarPage() {
 
      <p className="mb-3 text-sm font-medium text-[#6B5D55]">Clique sur un événement pour le modifier ou le supprimer.</p>
 
+    <div className="mb-3 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
+     <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">TOUT EST FUSIONNÉ DANS LE CALENDRIER</p>
+     <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
+      <span className="rounded-full border border-[#B8DEC5] bg-[#EAF6EE] px-3 py-1 text-[#2F5E43]">Tâche faite</span>
+      <span className="rounded-full border border-[#F3D6A7] bg-[#FFF5E8] px-3 py-1 text-[#9B6A22]">Tâche à faire</span>
+      <span className="rounded-full border border-[#F2C4BE] bg-[#FDEDEC] px-3 py-1 text-[#9A3C34]">Tâche en retard</span>
+      <span className="rounded-full border border-[#CED6DB] bg-[#EEF1F3] px-3 py-1 text-[#51606A]">Collecte ordures</span>
+      <span className="rounded-full border border-[#B8E3CB] bg-[#EAF7F1] px-3 py-1 text-[#1F7A52]">Collecte recyclage</span>
+      <span className="rounded-full border border-[#E6D7AE] bg-[#F5F0E3] px-3 py-1 text-[#7A5D16]">Collecte compost</span>
+      <span className="rounded-full border border-[#D9D0C8] bg-[#EEF3F7] px-3 py-1 text-[#2C2420]">Shift travail</span>
+     </div>
+    </div>
+
      <div className="overflow-hidden rounded-2xl border border-[#D9D0C8] bg-white p-2 sm:p-4">
       <Calendar
        localizer={localizer}
@@ -3394,31 +3575,40 @@ export default function CalendarPage() {
          };
         }
         if (event.kind === "task") {
-         const backgroundColor =
-          event.taskStatus === "done" ? "#6B8F71" : event.taskStatus === "late" ? "#B0483E" : "#B3874F";
+           const palette =
+            event.taskStatus === "done"
+             ? { backgroundColor: "#EAF6EE", textColor: "#2F5E43", borderColor: "#B8DEC5" }
+             : event.taskStatus === "late"
+              ? { backgroundColor: "#FDEDEC", textColor: "#9A3C34", borderColor: "#F2C4BE" }
+              : { backgroundColor: "#FFF5E8", textColor: "#9B6A22", borderColor: "#F3D6A7" };
 
          return {
           style: {
-           backgroundColor,
+             backgroundColor: palette.backgroundColor,
            borderRadius: "10px",
-           border: "none",
-           color: "#ffffff",
+             border: `1px solid ${palette.borderColor}`,
+             color: palette.textColor,
            padding: "2px 6px",
            fontWeight: 600,
           },
          };
         }
         if (event.kind === "collecte") {
-         const cfg = COLLECTE_STYLE[event.collecteKind];
+           const paletteByKind = {
+            garbage: { backgroundColor: "#EEF1F3", textColor: "#51606A", borderColor: "#CED6DB" },
+            recycling: { backgroundColor: "#EAF7F1", textColor: "#1F7A52", borderColor: "#B8E3CB" },
+            compost: { backgroundColor: "#F5F0E3", textColor: "#7A5D16", borderColor: "#E6D7AE" },
+           } as const;
+           const palette = paletteByKind[event.collecteKind];
          return {
           style: {
-           backgroundColor: cfg.color,
+             backgroundColor: palette.backgroundColor,
            borderRadius: "10px",
-           border: "none",
-           color: "#ffffff",
+             border: `1px solid ${palette.borderColor}`,
+             color: palette.textColor,
            padding: "2px 6px",
            fontWeight: 600,
-           opacity: 0.95,
+             opacity: 1,
           },
          };
         }
@@ -3426,13 +3616,13 @@ export default function CalendarPage() {
         if (event.kind === "shift") {
          return {
           style: {
-           backgroundColor: event.color,
+             backgroundColor: hexToRgba(event.color, 0.16),
            borderRadius: "10px",
-           border: "none",
-           color: "#ffffff",
+             border: `1px solid ${hexToRgba(event.color, 0.38)}`,
+             color: "#2C2420",
            padding: "2px 6px",
            fontWeight: 600,
-           opacity: 0.72,
+             opacity: 1,
           },
          };
         }
@@ -4059,22 +4249,6 @@ export default function CalendarPage() {
         </select>
        </div>
 
-        <div>
-         <label htmlFor="compostCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-         Compost : cycle
-         </label>
-         <select
-         id="compostCycle"
-         value={collectesCompostCycle}
-         onChange={(event) => setCollectesCompostCycle(event.target.value as "weekly" | "A" | "B")}
-         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-         >
-         <option value="weekly">Chaque semaine</option>
-         <option value="A">Semaine A</option>
-         <option value="B">Semaine B</option>
-         </select>
-        </div>
-
        <div>
         <label htmlFor="journalEditNotes" className="mb-1 block text-sm font-medium text-[#6B5D55]">
          Notes
@@ -4112,224 +4286,254 @@ export default function CalendarPage() {
     </div>
    )}
 
-     {shiftFormOpen && (
-      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
-       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
-        <div className="mb-4 flex items-center justify-between">
-         <h2 className="text-xl font-semibold text-[#2C2420]">💼 Mon horaire de travail</h2>
-         <button
-          type="button"
-          onClick={closeShiftForm}
-          className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
-         >
-          <X size={14} />
-         </button>
+    {shiftFormOpen && (
+     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-[0_20px_60px_rgba(15,36,54,0.22)]">
+      <div className="mb-4 flex items-center justify-between">
+       <h2 className="text-xl font-semibold text-[#2C2420]">💼 Mon horaire de travail</h2>
+       <button
+        type="button"
+        onClick={closeShiftForm}
+        className="rounded-lg border border-[#D9D0C8] px-2 py-1 text-sm text-[#6B5D55] hover:bg-[#EDE8E3]"
+       >
+        <X size={14} />
+       </button>
+      </div>
+
+      {shiftError && (
+       <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#FDF0EE] px-3 py-2 text-sm text-[#A85C52]">
+        {shiftError}
+       </p>
+      )}
+
+      <form className="space-y-4" onSubmit={onSaveShift}>
+       <div>
+        <label htmlFor="shiftTitle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Titre</label>
+        <input
+        id="shiftTitle"
+        type="text"
+        value={shiftTitle}
+        onChange={(event) => setShiftTitle(event.target.value)}
+        className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+        placeholder="Ex: Police, Hôpital, Bureau"
+        />
+       </div>
+
+       <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+        <label htmlFor="shiftType" className="mb-1 block text-sm font-medium text-[#6B5D55]">Type de shift</label>
+        <select
+         id="shiftType"
+         value={shiftType}
+         onChange={(event) => setShiftType(event.target.value as WorkShiftType)}
+         className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+        >
+         <option value="jour">{SHIFT_PRESETS.jour.label}</option>
+         <option value="soir">{SHIFT_PRESETS.soir.label}</option>
+         <option value="nuit">{SHIFT_PRESETS.nuit.label}</option>
+         <option value="personnalise">Personnalisé</option>
+        </select>
+        </div>
+        <div>
+        <label htmlFor="shiftColor" className="mb-1 block text-sm font-medium text-[#6B5D55]">Couleur</label>
+        <input
+         id="shiftColor"
+         type="color"
+         value={shiftColor}
+         onChange={(event) => setShiftColor(event.target.value)}
+         className="h-[44px] w-full rounded-xl border border-[#D9D0C8] px-2 py-1"
+        />
+        </div>
+       </div>
+
+       <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+        <label htmlFor="shiftStartAt" className="mb-1 block text-sm font-medium text-[#6B5D55]">Début</label>
+        <input
+         id="shiftStartAt"
+         type="datetime-local"
+         value={shiftStartAt}
+         onChange={(event) => setShiftStartAt(event.target.value)}
+         className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+        />
+        </div>
+        <div>
+        <label htmlFor="shiftEndAt" className="mb-1 block text-sm font-medium text-[#6B5D55]">Fin</label>
+        <input
+         id="shiftEndAt"
+         type="datetime-local"
+         value={shiftEndAt}
+         onChange={(event) => setShiftEndAt(event.target.value)}
+         className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+        />
+        </div>
+       </div>
+
+       <div>
+        <label htmlFor="shiftLocation" className="mb-1 block text-sm font-medium text-[#6B5D55]">Lieu (optionnel)</label>
+        <input
+        id="shiftLocation"
+        type="text"
+        value={shiftLocation}
+        onChange={(event) => setShiftLocation(event.target.value)}
+        className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+        placeholder="Ex: Poste, Hôpital, Bureau"
+        />
+       </div>
+
+       <section className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-4">
+        <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">RÉCURRENCE DU TRAVAIL</p>
+        <div className="mt-3 grid gap-2">
+        <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
+         <input type="radio" checked={shiftScheduleMode === "once"} onChange={() => setShiftScheduleMode("once")} />
+         Une seule fois
+        </label>
+        <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
+         <input type="radio" checked={shiftScheduleMode === "weekly"} onChange={() => setShiftScheduleMode("weekly")} />
+         Horaire normal chaque semaine
+        </label>
+        <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
+         <input type="radio" checked={shiftScheduleMode === "cycle"} onChange={() => setShiftScheduleMode("cycle")} />
+         Horaire atypique sur un cycle de X jours
+        </label>
         </div>
 
-        {shiftError && (
-         <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm text-[#A85C52]">
-          {shiftError}
-         </p>
+        {shiftScheduleMode === "weekly" && (
+        <div className="mt-4 space-y-3">
+         <p className="text-sm text-[#6B5D55]">Choisis les jours travaillés. Exemple: lundi, mardi, jeudi, vendredi.</p>
+         <div className="flex flex-wrap gap-2">
+          {WEEKDAY_OPTIONS.map((day) => (
+          <label key={`shift-day-${day.jsDay}`} className="inline-flex items-center gap-2 rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-xs text-[#6B5D55]">
+           <input
+            type="checkbox"
+            checked={Boolean(shiftRecurrenceDays[day.jsDay])}
+            onChange={(event) =>
+            setShiftRecurrenceDays((current) => ({
+             ...current,
+             [day.jsDay]: event.target.checked,
+            }))
+            }
+           />
+           {day.label}
+          </label>
+          ))}
+         </div>
+         <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+          <label htmlFor="shiftRecurrenceStart-weekly" className="mb-1 block text-sm font-medium text-[#6B5D55]">Commence le</label>
+          <input
+           id="shiftRecurrenceStart-weekly"
+           type="date"
+           value={shiftRecurrenceStart}
+           onChange={(event) => setShiftRecurrenceStart(event.target.value)}
+           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+          />
+          </div>
+          <div>
+          <label htmlFor="shiftRecurrenceEnd-weekly" className="mb-1 block text-sm font-medium text-[#6B5D55]">Se termine le (optionnel)</label>
+          <input
+           id="shiftRecurrenceEnd-weekly"
+           type="date"
+           value={shiftRecurrenceEnd}
+           onChange={(event) => setShiftRecurrenceEnd(event.target.value)}
+           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+          />
+          </div>
+         </div>
+        </div>
         )}
 
-        <form className="space-y-4" onSubmit={onSaveShift}>
-         <div>
-          <label htmlFor="shiftTitle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Titre</label>
-          <input
-           id="shiftTitle"
-           type="text"
-           value={shiftTitle}
-           onChange={(event) => setShiftTitle(event.target.value)}
-           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-           placeholder="Ex: Shift hôpital"
-          />
-         </div>
-
+        {shiftScheduleMode === "cycle" && (
+        <div className="mt-4 space-y-3">
+         <p className="text-sm text-[#6B5D55]">Exemple simple: si ton horaire recommence tous les 35 jours, entre 35 et la première journée de ce cycle.</p>
          <div className="grid gap-3 sm:grid-cols-2">
           <div>
-           <label htmlFor="shiftType" className="mb-1 block text-sm font-medium text-[#6B5D55]">Type de shift</label>
-           <select
-            id="shiftType"
-            value={shiftType}
-            onChange={(event) => setShiftType(event.target.value as WorkShiftType)}
-            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-           >
-            <option value="jour">{SHIFT_PRESETS.jour.label}</option>
-            <option value="soir">{SHIFT_PRESETS.soir.label}</option>
-            <option value="nuit">{SHIFT_PRESETS.nuit.label}</option>
-            <option value="personnalise">Personnalisé</option>
-           </select>
-          </div>
-          <div>
-           <label htmlFor="shiftColor" className="mb-1 block text-sm font-medium text-[#6B5D55]">Couleur du shift</label>
-           <input
-            id="shiftColor"
-            type="color"
-            value={shiftColor}
-            onChange={(event) => setShiftColor(event.target.value)}
-            className="h-[44px] w-full rounded-xl border border-[#D9D0C8] px-2 py-1"
-           />
-          </div>
-         </div>
-
-         <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-           <label htmlFor="shiftStartAt" className="mb-1 block text-sm font-medium text-[#6B5D55]">Heure début</label>
-           <input
-            id="shiftStartAt"
-            type="datetime-local"
-            value={shiftStartAt}
-            onChange={(event) => setShiftStartAt(event.target.value)}
-            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-           />
-          </div>
-          <div>
-           <label htmlFor="shiftEndAt" className="mb-1 block text-sm font-medium text-[#6B5D55]">Heure fin</label>
-           <input
-            id="shiftEndAt"
-            type="datetime-local"
-            value={shiftEndAt}
-            onChange={(event) => setShiftEndAt(event.target.value)}
-            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-           />
-          </div>
-         </div>
-
-         <div>
-          <label htmlFor="shiftLocation" className="mb-1 block text-sm font-medium text-[#6B5D55]">Lieu (optionnel)</label>
+          <label htmlFor="shiftCycleLengthDays" className="mb-1 block text-sm font-medium text-[#6B5D55]">Nombre de jours du cycle</label>
           <input
-           id="shiftLocation"
-           type="text"
-           value={shiftLocation}
-           onChange={(event) => setShiftLocation(event.target.value)}
+           id="shiftCycleLengthDays"
+           type="number"
+           min={1}
+           value={shiftCycleLengthDays}
+           onChange={(event) => setShiftCycleLengthDays(event.target.value)}
            className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-           placeholder="Ex: Hôpital, Bureau"
+           placeholder="35"
+          />
+          </div>
+          <div>
+          <label htmlFor="shiftRecurrenceStart-cycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Premier jour de ce cycle</label>
+          <input
+           id="shiftRecurrenceStart-cycle"
+           type="date"
+           value={shiftRecurrenceStart}
+           onChange={(event) => setShiftRecurrenceStart(event.target.value)}
+           className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+          />
+          </div>
+         </div>
+         <div>
+          <label htmlFor="shiftRecurrenceEnd-cycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Fin du cycle (optionnel)</label>
+          <input
+          id="shiftRecurrenceEnd-cycle"
+          type="date"
+          value={shiftRecurrenceEnd}
+          onChange={(event) => setShiftRecurrenceEnd(event.target.value)}
+          className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
           />
          </div>
+        </div>
+        )}
+       </section>
 
-         <section className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-          <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">RÉCURRENCE</p>
-          <div className="mt-2 grid gap-3 sm:grid-cols-2">
-           <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
-            <input type="radio" checked={shiftRecurrenceMode === "once"} onChange={() => setShiftRecurrenceMode("once")} />
-            Une seule fois
-           </label>
-           <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
-            <input type="radio" checked={shiftRecurrenceMode === "recurring"} onChange={() => setShiftRecurrenceMode("recurring")} />
-            Récurrent
-           </label>
-          </div>
-
-          {shiftRecurrenceMode === "recurring" && (
-           <div className="mt-3 space-y-3">
-            <div className="flex flex-wrap gap-2">
-             {WEEKDAY_OPTIONS.map((day) => (
-              <label key={`shift-day-${day.jsDay}`} className="inline-flex items-center gap-2 rounded-lg border border-[#D9D0C8] bg-white px-2 py-1 text-xs text-[#6B5D55]">
-               <input
-                type="checkbox"
-                checked={Boolean(shiftRecurrenceDays[day.jsDay])}
-                onChange={(event) =>
-                 setShiftRecurrenceDays((current) => ({
-                  ...current,
-                  [day.jsDay]: event.target.checked,
-                 }))
-                }
-               />
-               {day.label.slice(0, 3)}
-              </label>
-             ))}
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-             <div>
-              <label htmlFor="shiftRecurrenceStart" className="mb-1 block text-sm font-medium text-[#6B5D55]">Du</label>
-              <input
-               id="shiftRecurrenceStart"
-               type="date"
-               value={shiftRecurrenceStart}
-               onChange={(event) => setShiftRecurrenceStart(event.target.value)}
-               className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-              />
-             </div>
-             <div>
-              <label htmlFor="shiftRecurrenceEnd" className="mb-1 block text-sm font-medium text-[#6B5D55]">Au (optionnel)</label>
-              <input
-               id="shiftRecurrenceEnd"
-               type="date"
-               value={shiftRecurrenceEnd}
-               onChange={(event) => setShiftRecurrenceEnd(event.target.value)}
-               className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-              />
-             </div>
-            </div>
-
-            <div>
-             <label htmlFor="shiftFrequency" className="mb-1 block text-sm font-medium text-[#6B5D55]">Fréquence</label>
-             <select
-              id="shiftFrequency"
-              value={shiftFrequency}
-              onChange={(event) => setShiftFrequency(event.target.value as WorkShiftFrequency)}
-              className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-             >
-              <option value="weekly">Chaque semaine</option>
-              <option value="biweekly">Aux 2 semaines</option>
-              <option value="custom">Personnalisé</option>
-             </select>
-            </div>
-           </div>
-          )}
-         </section>
-
-         {(shiftEditMode === "override" || shiftEditMode === "edit") && (
-          <section className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
-           <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">CHANGEMENT DE SHIFT</p>
-           <div className="mt-2 space-y-3">
-            <div>
-             <label htmlFor="shiftReason" className="mb-1 block text-sm font-medium text-[#6B5D55]">Raison du changement (optionnel)</label>
-             <input
-              id="shiftReason"
-              type="text"
-              value={shiftReason}
-              onChange={(event) => setShiftReason(event.target.value)}
-              className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
-              placeholder="Ex: rendez-vous, échange collègue"
-             />
-            </div>
-            <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
-             <input
-              type="checkbox"
-              checked={shiftNotifyCoparent}
-              onChange={(event) => setShiftNotifyCoparent(event.target.checked)}
-             />
-             Notifier le co-parent
-            </label>
-           </div>
-          </section>
-         )}
-
-         <div className="mt-2 flex gap-2">
-          <button
-           type="submit"
-           disabled={isSavingShift || isDeletingShift}
-           className="flex-1 rounded-xl bg-[#2C3E50] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
-          >
-           {isSavingShift ? "Sauvegarde..." : "Sauvegarder le shift"}
-          </button>
-          {shiftEditMode !== "create" && (
-           <button
-            type="button"
-            onClick={onDeleteShift}
-            disabled={isSavingShift || isDeletingShift}
-            className="flex-1 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm font-semibold text-[#A85C52] disabled:cursor-not-allowed disabled:opacity-70"
-           >
-            {isDeletingShift ? "Suppression..." : "🗑️ Supprimer"}
-           </button>
-          )}
+       {(shiftEditMode === "override" || shiftEditMode === "edit") && (
+        <section className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-3">
+        <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">CHANGEMENT DE SHIFT</p>
+        <div className="mt-2 space-y-3">
+         <div>
+          <label htmlFor="shiftReason" className="mb-1 block text-sm font-medium text-[#6B5D55]">Raison du changement (optionnel)</label>
+          <input
+          id="shiftReason"
+          type="text"
+          value={shiftReason}
+          onChange={(event) => setShiftReason(event.target.value)}
+          className="w-full rounded-xl border border-[#D9D0C8] px-3 py-2.5 text-[#2C2420]"
+          placeholder="Ex: échange avec collègue"
+          />
          </div>
-        </form>
+         <label className="inline-flex items-center gap-2 text-sm text-[#6B5D55]">
+          <input
+          type="checkbox"
+          checked={shiftNotifyCoparent}
+          onChange={(event) => setShiftNotifyCoparent(event.target.checked)}
+          />
+          Notifier le co-parent
+         </label>
+        </div>
+        </section>
+       )}
+
+       <div className="mt-2 flex gap-2">
+        <button
+        type="submit"
+        disabled={isSavingShift || isDeletingShift}
+        className="flex-1 rounded-xl bg-[#2C3E50] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+        >
+        {isSavingShift ? "Sauvegarde..." : "Sauvegarder le shift"}
+        </button>
+        {shiftEditMode !== "create" && (
+        <button
+         type="button"
+         onClick={onDeleteShift}
+         disabled={isSavingShift || isDeletingShift}
+         className="flex-1 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm font-semibold text-[#A85C52] disabled:cursor-not-allowed disabled:opacity-70"
+        >
+         {isDeletingShift ? "Suppression..." : "🗑️ Supprimer"}
+        </button>
+        )}
        </div>
+      </form>
       </div>
-     )}
+     </div>
+    )}
 
     {collectesFormOpen && (
      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0F223680] p-4 sm:items-center">
@@ -4346,7 +4550,7 @@ export default function CalendarPage() {
       </div>
 
       {collectesError && (
-       <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-sm text-[#A85C52]">
+       <p className="mb-4 rounded-xl border border-[#D9D0C8] bg-[#FDF0EE] px-3 py-2 text-sm text-[#A85C52]">
         {collectesError}
        </p>
       )}
@@ -4354,151 +4558,93 @@ export default function CalendarPage() {
       <form className="space-y-4" onSubmit={onSaveCollectes}>
        <div className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-4">
         <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">RÈGLE PAR TYPE DE COLLECTE</p>
-        <p className="mt-2 text-sm text-[#6B5D55]">Pour chaque type, choisis simplement un jour et un cycle: <span className="font-semibold">Chaque semaine</span>, <span className="font-semibold">Semaine A</span> ou <span className="font-semibold">Semaine B</span>.</p>
+        <p className="mt-2 text-sm text-[#6B5D55]">Chaque collecte a son jour et son cycle. Tu peux par exemple mettre <span className="font-semibold">Ordures = Semaine A</span> et <span className="font-semibold">Recyclage = Semaine B</span>.</p>
 
         <div className="mt-4 space-y-3">
-         <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
-          <p className="text-sm font-semibold text-[#2C2420]">🗑️ Ordures ménagères</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-           <div>
-        <label htmlFor="garbageDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
-        <select
-         id="garbageDay"
-         value={collectesGarbageDay}
-         onChange={(event) => setCollectesGarbageDay(event.target.value)}
-         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-         {WEEKDAY_OPTIONS.map((day) => (
-          <option key={`garbage-${day.jsDay}`} value={day.jsDay}>
-           {day.label}
-          </option>
-         ))}
-        </select>
-           </div>
-           <div>
-        <label htmlFor="garbageCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
-        <select
-         id="garbageCycle"
-         value={collectesGarbageCycle}
-         onChange={(event) => setCollectesGarbageCycle(event.target.value as "weekly" | "A" | "B")}
-         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-         <option value="weekly">Chaque semaine</option>
-         <option value="A">Semaine A</option>
-         <option value="B">Semaine B</option>
-        </select>
-           </div>
+        <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
+         <p className="text-sm font-semibold text-[#2C2420]">🗑️ Ordures</p>
+         <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+          <label htmlFor="garbageDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
+          <select id="garbageDay" value={collectesGarbageDay} onChange={(event) => setCollectesGarbageDay(event.target.value)} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]">
+           {WEEKDAY_OPTIONS.map((day) => (
+            <option key={`garbage-${day.jsDay}`} value={day.jsDay}>{day.label}</option>
+           ))}
+          </select>
           </div>
-         </div>
-
-         <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
-          <p className="text-sm font-semibold text-[#2C2420]">♻️ Recyclage</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-           <div>
-        <label htmlFor="recyclingDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
-        <select
-         id="recyclingDay"
-         value={collectesRecyclingDay}
-         onChange={(event) => setCollectesRecyclingDay(event.target.value)}
-         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-         {WEEKDAY_OPTIONS.map((day) => (
-          <option key={`recycling-${day.jsDay}`} value={day.jsDay}>
-           {day.label}
-          </option>
-         ))}
-        </select>
-           </div>
-           <div>
-        <label htmlFor="recyclingCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
-        <select
-         id="recyclingCycle"
-         value={collectesRecyclingCycle}
-         onChange={(event) => setCollectesRecyclingCycle(event.target.value as "weekly" | "A" | "B")}
-         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-         <option value="weekly">Chaque semaine</option>
-         <option value="A">Semaine A</option>
-         <option value="B">Semaine B</option>
-        </select>
-           </div>
-          </div>
-         </div>
-
-         <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
-          <p className="text-sm font-semibold text-[#2C2420]">🌱 Compost</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-           <div>
-        <label htmlFor="compostDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
-        <select
-         id="compostDay"
-         value={collectesCompostDay}
-         onChange={(event) => setCollectesCompostDay(event.target.value)}
-         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-         {WEEKDAY_OPTIONS.map((day) => (
-          <option key={`compost-${day.jsDay}`} value={day.jsDay}>
-           {day.label}
-          </option>
-         ))}
-        </select>
-           </div>
-           <div>
-        <label htmlFor="compostCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
-        <select
-         id="compostCycle"
-         value={collectesCompostCycle}
-         onChange={(event) => setCollectesCompostCycle(event.target.value as "weekly" | "A" | "B")}
-         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-         <option value="weekly">Chaque semaine</option>
-         <option value="A">Semaine A</option>
-         <option value="B">Semaine B</option>
-        </select>
-           </div>
+          <div>
+          <label htmlFor="garbageCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
+          <select id="garbageCycle" value={collectesGarbageCycle} onChange={(event) => setCollectesGarbageCycle(event.target.value as "weekly" | "A" | "B")} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]">
+           <option value="weekly">Chaque semaine</option>
+           <option value="A">Semaine A</option>
+           <option value="B">Semaine B</option>
+          </select>
           </div>
          </div>
         </div>
+
+        <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
+         <p className="text-sm font-semibold text-[#2C2420]">♻️ Recyclage</p>
+         <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+          <label htmlFor="recyclingDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
+          <select id="recyclingDay" value={collectesRecyclingDay} onChange={(event) => setCollectesRecyclingDay(event.target.value)} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]">
+           {WEEKDAY_OPTIONS.map((day) => (
+            <option key={`recycling-${day.jsDay}`} value={day.jsDay}>{day.label}</option>
+           ))}
+          </select>
+          </div>
+          <div>
+          <label htmlFor="recyclingCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
+          <select id="recyclingCycle" value={collectesRecyclingCycle} onChange={(event) => setCollectesRecyclingCycle(event.target.value as "weekly" | "A" | "B")} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]">
+           <option value="weekly">Chaque semaine</option>
+           <option value="A">Semaine A</option>
+           <option value="B">Semaine B</option>
+          </select>
+          </div>
+         </div>
+        </div>
+
+        <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
+         <p className="text-sm font-semibold text-[#2C2420]">🌱 Compost</p>
+         <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+          <label htmlFor="compostDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
+          <select id="compostDay" value={collectesCompostDay} onChange={(event) => setCollectesCompostDay(event.target.value)} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]">
+           {WEEKDAY_OPTIONS.map((day) => (
+            <option key={`compost-${day.jsDay}`} value={day.jsDay}>{day.label}</option>
+           ))}
+          </select>
+          </div>
+          <div>
+          <label htmlFor="compostCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
+          <select id="compostCycle" value={collectesCompostCycle} onChange={(event) => setCollectesCompostCycle(event.target.value as "weekly" | "A" | "B")} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]">
+           <option value="weekly">Chaque semaine</option>
+           <option value="A">Semaine A</option>
+           <option value="B">Semaine B</option>
+          </select>
+          </div>
+         </div>
+        </div>
+        </div>
        </div>
 
-       <div>
-        <label htmlFor="reminderTime" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-        Heure du rappel
-        </label>
-        <input
-        id="reminderTime"
-        type="time"
-        value={collectesReminderTime}
-        onChange={(event) => setCollectesReminderTime(event.target.value)}
-        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        />
-       </div>
-
-      <p className="rounded-lg border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-xs text-[#6B5D55]">
-       Astuce simple: si tu veux alterner sans erreur, mets <span className="font-semibold">Ordures = Semaine A</span> et <span className="font-semibold">Recyclage = Semaine B</span>.
-      </p>
-
-       <div>
-        <label htmlFor="assignmentMode" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-        Attribution du rappel
-        </label>
-        <select
-        id="assignmentMode"
-        value={collectesAssignmentMode}
-        onChange={(event) => setCollectesAssignmentMode(event.target.value as "parent1" | "parent2" | "alternate")}
-        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-        <option value="alternate">Alternance</option>
-        <option value="parent1">Parent 1</option>
-        <option value="parent2">Parent 2</option>
+       <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+        <label htmlFor="reminderTime" className="mb-1 block text-sm font-medium text-[#6B5D55]">Heure du rappel</label>
+        <input id="reminderTime" type="time" value={collectesReminderTime} onChange={(event) => setCollectesReminderTime(event.target.value)} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]" />
+        </div>
+        <div>
+        <label htmlFor="assignmentMode" className="mb-1 block text-sm font-medium text-[#6B5D55]">Attribution du rappel</label>
+        <select id="assignmentMode" value={collectesAssignmentMode} onChange={(event) => setCollectesAssignmentMode(event.target.value as "parent1" | "parent2" | "alternate")} className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]">
+         <option value="alternate">Alternance</option>
+         <option value="parent1">Parent 1</option>
+         <option value="parent2">Parent 2</option>
         </select>
+        </div>
        </div>
 
-       <button
-        type="submit"
-        disabled={isSavingCollectes}
-        className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
-       >
+       <button type="submit" disabled={isSavingCollectes} className="w-full rounded-xl bg-[#7C6B5D] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70">
         {isSavingCollectes ? "Sauvegarde..." : "Sauvegarder"}
        </button>
       </form>
