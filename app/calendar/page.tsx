@@ -1654,7 +1654,7 @@ export default function CalendarPage() {
 
    const notificationError = await notifyCoparentAboutShift(supabase, {
     action: "suppression",
-    title: options?.title ?? shiftTitle.trim() || "Shift travail",
+    title: options?.title ?? (shiftTitle.trim() || "Shift travail"),
     start: options?.start ?? new Date(shiftStartAt),
     end: options?.end ?? new Date(shiftEndAt),
     location: options?.location ?? shiftLocation,
