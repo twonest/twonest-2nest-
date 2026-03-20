@@ -58,9 +58,27 @@ update public.collectes
 set assignment_mode = 'alternate'
 where assignment_mode is null;
 
-update public.collectes
-set heure_rappel = coalesce(heure_rappel, reminder_time, '20:00'::time)
-where heure_rappel is null;
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'collectes'
+      and column_name = 'reminder_time'
+  ) then
+    execute '
+      update public.collectes
+      set heure_rappel = coalesce(heure_rappel, reminder_time, ''20:00''::time)
+      where heure_rappel is null
+    ';
+  else
+    update public.collectes
+    set heure_rappel = '20:00'::time
+    where heure_rappel is null;
+  end if;
+end;
+$$;
 
 update public.collectes
 set date_debut = current_date
@@ -74,93 +92,242 @@ update public.collectes
 set updated_at = now()
 where updated_at is null;
 
-update public.collectes
-set type = 'ordures',
-    jour_semaine = coalesce(jour_semaine, garbage_day),
-    nom = coalesce(nullif(nom, ''), 'Collecte ordures'),
-    couleur = coalesce(nullif(couleur, ''), '#7F8C8D'),
-    icone = coalesce(nullif(icone, ''), 'Trash2')
-where type is null;
-
-insert into public.collectes (
-  family_id,
-  type,
-  jour_semaine,
-  frequence,
-  semaines_alternees,
-  assignment_mode,
-  heure_rappel,
-  nom,
-  couleur,
-  icone,
-  date_debut,
-  created_by,
-  created_at,
-  updated_at
-)
-select
-  family_id,
-  'recyclage',
-  recycling_day,
-  coalesce(frequence, 'weekly'),
-  semaines_alternees,
-  coalesce(assignment_mode, 'alternate'),
-  coalesce(heure_rappel, reminder_time, '20:00'::time),
-  'Collecte recyclage',
-  '#27AE60',
-  'RefreshCw',
-  coalesce(date_debut, current_date),
-  created_by,
-  coalesce(created_at, now()),
-  coalesce(updated_at, now())
-from public.collectes source
-where recycling_day is not null
-  and not exists (
+do $$
+begin
+  if exists (
     select 1
-    from public.collectes target
-    where target.family_id = source.family_id
-      and target.type = 'recyclage'
-  );
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'collectes'
+      and column_name = 'garbage_day'
+  ) then
+    execute '
+      update public.collectes
+      set type = ''ordures'',
+          jour_semaine = coalesce(jour_semaine, garbage_day),
+          nom = coalesce(nullif(nom, ''''), ''Collecte ordures''),
+          couleur = coalesce(nullif(couleur, ''''), ''#7F8C8D''),
+          icone = coalesce(nullif(icone, ''''), ''Trash2'')
+      where type is null
+    ';
+  else
+    update public.collectes
+    set type = 'ordures',
+        nom = coalesce(nullif(nom, ''), 'Collecte ordures'),
+        couleur = coalesce(nullif(couleur, ''), '#7F8C8D'),
+        icone = coalesce(nullif(icone, ''), 'Trash2')
+    where type is null;
+  end if;
+end;
+$$;
 
-insert into public.collectes (
-  family_id,
-  type,
-  jour_semaine,
-  frequence,
-  semaines_alternees,
-  assignment_mode,
-  heure_rappel,
-  nom,
-  couleur,
-  icone,
-  date_debut,
-  created_by,
-  created_at,
-  updated_at
-)
-select
-  family_id,
-  'compost',
-  compost_day,
-  coalesce(frequence, 'weekly'),
-  semaines_alternees,
-  coalesce(assignment_mode, 'alternate'),
-  coalesce(heure_rappel, reminder_time, '20:00'::time),
-  'Collecte compost',
-  '#8B6914',
-  'Leaf',
-  coalesce(date_debut, current_date),
-  created_by,
-  coalesce(created_at, now()),
-  coalesce(updated_at, now())
-from public.collectes source
-where compost_day is not null
-  and not exists (
+do $$
+begin
+  if exists (
     select 1
-    from public.collectes target
-    where target.family_id = source.family_id
-      and target.type = 'compost'
-  );
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'collectes'
+      and column_name = 'recycling_day'
+  ) then
+    if exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'collectes'
+        and column_name = 'reminder_time'
+    ) then
+      execute '
+        insert into public.collectes (
+          family_id,
+          type,
+          jour_semaine,
+          frequence,
+          semaines_alternees,
+          assignment_mode,
+          heure_rappel,
+          nom,
+          couleur,
+          icone,
+          date_debut,
+          created_by,
+          created_at,
+          updated_at
+        )
+        select
+          family_id,
+          ''recyclage'',
+          recycling_day,
+          coalesce(frequence, ''weekly''),
+          semaines_alternees,
+          coalesce(assignment_mode, ''alternate''),
+          coalesce(heure_rappel, reminder_time, ''20:00''::time),
+          ''Collecte recyclage'',
+          ''#27AE60'',
+          ''RefreshCw'',
+          coalesce(date_debut, current_date),
+          created_by,
+          coalesce(created_at, now()),
+          coalesce(updated_at, now())
+        from public.collectes source
+        where recycling_day is not null
+          and not exists (
+            select 1
+            from public.collectes target
+            where target.family_id = source.family_id
+              and target.type = ''recyclage''
+          )
+      ';
+    else
+      execute '
+        insert into public.collectes (
+          family_id,
+          type,
+          jour_semaine,
+          frequence,
+          semaines_alternees,
+          assignment_mode,
+          heure_rappel,
+          nom,
+          couleur,
+          icone,
+          date_debut,
+          created_by,
+          created_at,
+          updated_at
+        )
+        select
+          family_id,
+          ''recyclage'',
+          recycling_day,
+          coalesce(frequence, ''weekly''),
+          semaines_alternees,
+          coalesce(assignment_mode, ''alternate''),
+          coalesce(heure_rappel, ''20:00''::time),
+          ''Collecte recyclage'',
+          ''#27AE60'',
+          ''RefreshCw'',
+          coalesce(date_debut, current_date),
+          created_by,
+          coalesce(created_at, now()),
+          coalesce(updated_at, now())
+        from public.collectes source
+        where recycling_day is not null
+          and not exists (
+            select 1
+            from public.collectes target
+            where target.family_id = source.family_id
+              and target.type = ''recyclage''
+          )
+      ';
+    end if;
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'collectes'
+      and column_name = 'compost_day'
+  ) then
+    if exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'collectes'
+        and column_name = 'reminder_time'
+    ) then
+      execute '
+        insert into public.collectes (
+          family_id,
+          type,
+          jour_semaine,
+          frequence,
+          semaines_alternees,
+          assignment_mode,
+          heure_rappel,
+          nom,
+          couleur,
+          icone,
+          date_debut,
+          created_by,
+          created_at,
+          updated_at
+        )
+        select
+          family_id,
+          ''compost'',
+          compost_day,
+          coalesce(frequence, ''weekly''),
+          semaines_alternees,
+          coalesce(assignment_mode, ''alternate''),
+          coalesce(heure_rappel, reminder_time, ''20:00''::time),
+          ''Collecte compost'',
+          ''#8B6914'',
+          ''Leaf'',
+          coalesce(date_debut, current_date),
+          created_by,
+          coalesce(created_at, now()),
+          coalesce(updated_at, now())
+        from public.collectes source
+        where compost_day is not null
+          and not exists (
+            select 1
+            from public.collectes target
+            where target.family_id = source.family_id
+              and target.type = ''compost''
+          )
+      ';
+    else
+      execute '
+        insert into public.collectes (
+          family_id,
+          type,
+          jour_semaine,
+          frequence,
+          semaines_alternees,
+          assignment_mode,
+          heure_rappel,
+          nom,
+          couleur,
+          icone,
+          date_debut,
+          created_by,
+          created_at,
+          updated_at
+        )
+        select
+          family_id,
+          ''compost'',
+          compost_day,
+          coalesce(frequence, ''weekly''),
+          semaines_alternees,
+          coalesce(assignment_mode, ''alternate''),
+          coalesce(heure_rappel, ''20:00''::time),
+          ''Collecte compost'',
+          ''#8B6914'',
+          ''Leaf'',
+          coalesce(date_debut, current_date),
+          created_by,
+          coalesce(created_at, now()),
+          coalesce(updated_at, now())
+        from public.collectes source
+        where compost_day is not null
+          and not exists (
+            select 1
+            from public.collectes target
+            where target.family_id = source.family_id
+              and target.type = ''compost''
+          )
+      ';
+    end if;
+  end if;
+end;
+$$;
 
 alter table public.collectes
 alter column type set not null;
