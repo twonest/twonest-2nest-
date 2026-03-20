@@ -18,6 +18,7 @@ create table if not exists public.work_shifts (
   recurrence_start date null,
   recurrence_end date null,
   frequency text null check (frequency in ('weekly', 'biweekly', 'custom')),
+  cycle_length_days integer null,
   is_override boolean not null default false,
   base_shift_id uuid null references public.work_shifts(id) on delete set null,
   reason text null,
@@ -65,6 +66,9 @@ add column if not exists recurrence_end date;
 
 alter table if exists public.work_shifts
 add column if not exists frequency text;
+
+alter table if exists public.work_shifts
+add column if not exists cycle_length_days integer;
 
 alter table if exists public.work_shifts
 add column if not exists is_override boolean;
@@ -178,6 +182,12 @@ drop constraint if exists work_shifts_frequency_check;
 
 alter table public.work_shifts
 add constraint work_shifts_frequency_check check (frequency in ('weekly', 'biweekly', 'custom') or frequency is null);
+
+alter table public.work_shifts
+drop constraint if exists work_shifts_cycle_length_days_check;
+
+alter table public.work_shifts
+add constraint work_shifts_cycle_length_days_check check (cycle_length_days is null or cycle_length_days > 0);
 
 do $$
 begin

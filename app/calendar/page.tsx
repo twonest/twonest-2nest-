@@ -361,6 +361,21 @@ function formatDateLabel(value: string): string {
  });
 }
 
+function formatDateTimeLabel(value: Date): string {
+ const parsed = new Date(value);
+ if (Number.isNaN(parsed.getTime())) {
+  return "";
+ }
+
+ return parsed.toLocaleString("fr-CA", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+ });
+}
+
 function formatMonthLabel(date: Date): string {
  const label = date.toLocaleDateString("fr-CA", {
   month: "long",
@@ -1554,30 +1569,121 @@ export default function CalendarPage() {
   setShiftError("");
  };
 
- const onDeleteShift = async () => {
-  if (!shiftTargetId) {
-  return;
+ const buildShiftNotificationMessage = (payload: {
+  action: "modification" | "suppression" | "changement";
+  title: string;
+  start: Date;
+  end: Date;
+  location?: string | null;
+  reason?: string | null;
+ }) => {
+  const actionLabel =
+   payload.action === "suppression"
+    ? "Suppression d'un shift"
+    : payload.action === "changement"
+     ? "Changement de shift"
+     : "Modification d'un shift";
+
+  const lines = [
+   `${actionLabel}: ${payload.title}`,
+   `Horaire: ${formatDateTimeLabel(payload.start)} à ${formatDateTimeLabel(payload.end)}`,
+  ];
+
+  if (payload.location && payload.location.trim().length > 0) {
+   lines.push(`Lieu: ${payload.location.trim()}`);
+  }
+
+  if (payload.reason && payload.reason.trim().length > 0) {
+   lines.push(`Raison: ${payload.reason.trim()}`);
+  }
+
+  return lines.join("\n");
+ };
+
+ const notifyCoparentAboutShift = async (
+  client: ReturnType<typeof getSupabaseBrowserClient>,
+  payload: {
+   action: "modification" | "suppression" | "changement";
+   title: string;
+   start: Date;
+   end: Date;
+   location?: string | null;
+   reason?: string | null;
+   notifyCoparent: boolean;
+  },
+ ) => {
+  if (!currentFamilyId || !user || !payload.notifyCoparent) {
+   return null;
+  }
+
+  const content = buildShiftNotificationMessage(payload);
+  const notification = await client.from("messages").insert({
+   family_id: currentFamilyId,
+   sender_id: user.id,
+   content,
+  });
+
+  return notification.error ? notification.error.message : null;
+ };
+
+ const deleteShiftById = async (
+  shiftId: string,
+  options?: {
+   title?: string;
+   start?: Date;
+   end?: Date;
+   location?: string | null;
+   reason?: string | null;
+   notifyCoparent?: boolean;
+   closeForm?: boolean;
+  },
+ ) => {
+  if (!shiftId || !currentFamilyId || !user || isReadOnly) {
+   return;
   }
 
   setIsDeletingShift(true);
   setShiftError("");
 
   try {
-  const supabase = getSupabaseBrowserClient();
-  const remove = await supabase.from("work_shifts").delete().eq("id", shiftTargetId);
-  if (remove.error) {
-   throw new Error(remove.error.message);
+   const supabase = getSupabaseBrowserClient();
+   const remove = await supabase.from("work_shifts").delete().eq("id", shiftId);
+   if (remove.error) {
+    throw new Error(remove.error.message);
+   }
+
+   const notificationError = await notifyCoparentAboutShift(supabase, {
+    action: "suppression",
+    title: options?.title ?? shiftTitle.trim() || "Shift travail",
+    start: options?.start ?? new Date(shiftStartAt),
+    end: options?.end ?? new Date(shiftEndAt),
+    location: options?.location ?? shiftLocation,
+    reason: options?.reason ?? shiftReason,
+    notifyCoparent: options?.notifyCoparent ?? shiftNotifyCoparent,
+   });
+
+   await refreshWorkShifts(supabase, currentFamilyId);
+   if (options?.closeForm !== false) {
+    closeShiftForm();
+   }
+   setActiveShiftMenu(null);
+   setToast({
+    message: notificationError ? "Shift supprimé. Notification non envoyée." : "Shift supprimé.",
+    variant: "success",
+   });
+  } catch (error) {
+   setShiftError(error instanceof Error ? error.message : "Impossible de supprimer le shift.");
+  } finally {
+   setIsDeletingShift(false);
+  }
+ };
+
+ const onDeleteShift = async () => {
+  if (!shiftTargetId) {
+   return;
   }
 
-  await refreshWorkShifts(supabase, currentFamilyId);
-  closeShiftForm();
-  setActiveShiftMenu(null);
-  setToast({ message: "Shift supprimé.", variant: "success" });
-  } catch (error) {
-  setShiftError(error instanceof Error ? error.message : "Impossible de supprimer le shift.");
-  } finally {
-  setIsDeletingShift(false);
-  }
+  await deleteShiftById(shiftTargetId, { closeForm: true });
  };
 
  const onSaveShift = async (event: FormEvent<HTMLFormElement>) => {
@@ -1640,6 +1746,8 @@ export default function CalendarPage() {
    return rest;
   };
 
+  let notificationError: string | null = null;
+
   if (shiftEditMode === "edit" && shiftTargetId) {
    let update = await supabase.from("work_shifts").update(basePayload).eq("id", shiftTargetId);
    if (update.error && update.error.message.toLowerCase().includes("cycle_length_days")) {
@@ -1648,6 +1756,15 @@ export default function CalendarPage() {
    if (update.error) {
     throw new Error(update.error.message);
    }
+   notificationError = await notifyCoparentAboutShift(supabase, {
+    action: "modification",
+    title: String(basePayload.title ?? "Shift travail"),
+    start: startDate,
+    end: endDate,
+    location: typeof basePayload.location === "string" ? basePayload.location : null,
+    reason: typeof basePayload.reason === "string" ? basePayload.reason : null,
+    notifyCoparent: Boolean(basePayload.notify_coparent),
+   });
   } else {
    let insert = await supabase.from("work_shifts").insert(basePayload);
    if (insert.error && insert.error.message.toLowerCase().includes("cycle_length_days")) {
@@ -1656,12 +1773,27 @@ export default function CalendarPage() {
    if (insert.error) {
     throw new Error(insert.error.message);
    }
+
+   if (shiftEditMode === "override") {
+    notificationError = await notifyCoparentAboutShift(supabase, {
+     action: "changement",
+     title: String(basePayload.title ?? "Shift travail"),
+     start: startDate,
+     end: endDate,
+     location: typeof basePayload.location === "string" ? basePayload.location : null,
+     reason: typeof basePayload.reason === "string" ? basePayload.reason : null,
+     notifyCoparent: Boolean(basePayload.notify_coparent),
+    });
+   }
   }
 
   await refreshWorkShifts(supabase, currentFamilyId);
   closeShiftForm();
   setActiveShiftMenu(null);
-  setToast({ message: "Shift sauvegardé.", variant: "success" });
+  setToast({
+   message: notificationError ? "Shift sauvegardé. Notification non envoyée." : "Shift sauvegardé.",
+   variant: "success",
+  });
   } catch (error) {
   setShiftError(error instanceof Error ? error.message : "Impossible de sauvegarder le shift.");
   } finally {
@@ -3795,10 +3927,25 @@ export default function CalendarPage() {
        <button
         type="button"
         onClick={() => {
-        setShiftEditMode("edit");
-        setShiftTargetId(activeShiftMenu.sourceShiftId);
+        const current = activeShiftMenu;
         setActiveShiftMenu(null);
-        setShiftFormOpen(true);
+        const confirmed = window.confirm(
+         current.recurrenceMode === "recurring"
+          ? "Supprimer cet horaire de travail récurrent ?"
+          : "Supprimer ce shift ?",
+        );
+        if (!confirmed) {
+         return;
+        }
+        void deleteShiftById(current.sourceShiftId, {
+         title: current.title,
+         start: current.start,
+         end: current.end,
+         location: current.location,
+         reason: current.reason,
+         notifyCoparent: current.notifyCoparent,
+         closeForm: false,
+        });
         }}
         className="rounded-lg border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-left text-sm font-semibold text-[#A85C52] transition hover:bg-[#FFECEF]"
        >
