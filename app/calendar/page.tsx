@@ -202,8 +202,9 @@ type CollecteConfig = {
  compostDay: number | null;
  reminderTime: string;
  assignmentMode: "parent1" | "parent2" | "alternate";
- frequence: "weekly" | "biweekly" | "monthly";
- semuinesAlternees: "A" | "B" | null;
+ garbageCycle: "weekly" | "A" | "B";
+ recyclingCycle: "weekly" | "A" | "B";
+ compostCycle: "weekly" | "A" | "B";
 };
 
 type SupabaseJournalGardeRow = {
@@ -649,8 +650,9 @@ export default function CalendarPage() {
  const [collectesCompostDay, setCollectesCompostDay] = useState("5");
  const [collectesReminderTime, setCollectesReminderTime] = useState("20:00");
  const [collectesAssignmentMode, setCollectesAssignmentMode] = useState<"parent1" | "parent2" | "alternate">("alternate");
- const [collectesFrequence, setCollectesFrequence] = useState<"weekly" | "biweekly" | "monthly">("weekly");
- const [collectesSemuinesAlternees, setCollectesSemuinesAlternees] = useState<"A" | "B" | null>(null);
+ const [collectesGarbageCycle, setCollectesGarbageCycle] = useState<"weekly" | "A" | "B">("weekly");
+ const [collectesRecyclingCycle, setCollectesRecyclingCycle] = useState<"weekly" | "A" | "B">("weekly");
+ const [collectesCompostCycle, setCollectesCompostCycle] = useState<"weekly" | "A" | "B">("weekly");
  const [isSavingCollectes, setIsSavingCollectes] = useState(false);
  const [workShifts, setWorkShifts] = useState<CalendarWorkShiftEvent[]>([]);
  const [shiftFormOpen, setShiftFormOpen] = useState(false);
@@ -930,14 +932,18 @@ export default function CalendarPage() {
       first.assignment_mode === "parent1" || first.assignment_mode === "parent2" || first.assignment_mode === "alternate"
        ? first.assignment_mode
        : "alternate",
-     frequence:
-      first.frequence === "weekly" || first.frequence === "biweekly" || first.frequence === "monthly"
-       ? first.frequence
-       : "weekly",
-     semuinesAlternees:
-      first.semaines_alternees === "A" || first.semaines_alternees === "B"
+     garbageCycle:
+      first.frequence === "biweekly" && (first.semaines_alternees === "A" || first.semaines_alternees === "B")
        ? first.semaines_alternees
-       : null,
+       : "weekly",
+     recyclingCycle:
+      first.frequence === "biweekly" && (first.semaines_alternees === "A" || first.semaines_alternees === "B")
+       ? first.semaines_alternees
+       : "weekly",
+     compostCycle:
+      first.frequence === "biweekly" && (first.semaines_alternees === "A" || first.semaines_alternees === "B")
+       ? first.semaines_alternees
+       : "weekly",
     };
 
     setCollectesConfig(nextConfig);
@@ -957,6 +963,16 @@ export default function CalendarPage() {
     const compost = byType.compost;
     const reference = garbage ?? recycling ?? compost ?? {};
 
+    const rowCycle = (row: Record<string, unknown> | undefined): "weekly" | "A" | "B" => {
+    if (!row) {
+     return "weekly";
+    }
+    if (row.frequence === "biweekly" && (row.semaines_alternees === "A" || row.semaines_alternees === "B")) {
+     return row.semaines_alternees;
+    }
+    return "weekly";
+    };
+
     const nextConfig: CollecteConfig = {
     familyId,
     garbageDay: typeof garbage?.jour_semaine === "number" ? garbage.jour_semaine : null,
@@ -967,14 +983,9 @@ export default function CalendarPage() {
      reference.assignment_mode === "parent1" || reference.assignment_mode === "parent2" || reference.assignment_mode === "alternate"
       ? reference.assignment_mode
       : "alternate",
-    frequence:
-     reference.frequence === "weekly" || reference.frequence === "biweekly" || reference.frequence === "monthly"
-      ? reference.frequence
-      : "weekly",
-    semuinesAlternees:
-     reference.semaines_alternees === "A" || reference.semaines_alternees === "B"
-      ? reference.semaines_alternees
-      : null,
+    garbageCycle: rowCycle(garbage),
+    recyclingCycle: rowCycle(recycling),
+    compostCycle: rowCycle(compost),
     };
 
     setCollectesConfig(nextConfig);
@@ -1063,33 +1074,17 @@ export default function CalendarPage() {
     return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
    };
 
-   const shouldCollectOnDate = (
-    date: Date,
-    frequence: "weekly" | "biweekly" | "monthly",
-    semuinesAlternees: "A" | "B" | null,
-   ): boolean => {
-    if (frequence === "weekly") {
-     return true;
-    }
-
-    if (frequence === "biweekly") {
-     const weekNumber = getISOWeekNumber(date);
-     if (semuinesAlternees === "A") {
-      return weekNumber % 2 === 1;
-     }
-     if (semuinesAlternees === "B") {
-      return weekNumber % 2 === 0;
-     }
-     return true;
-    }
-
-    if (frequence === "monthly") {
-     const dayOfMonth = date.getDate();
-     return dayOfMonth >= 1 && dayOfMonth <= 7;
-    }
-
+  const shouldCollectOnDate = (date: Date, cycle: "weekly" | "A" | "B"): boolean => {
+   if (cycle === "weekly") {
     return true;
-   };
+   }
+
+   const weekNumber = getISOWeekNumber(date);
+   if (cycle === "A") {
+    return weekNumber % 2 === 1;
+   }
+   return weekNumber % 2 === 0;
+  };
 
    const resolveReminderParent = (targetDate: Date, mode: "parent1" | "parent2" | "alternate"): ParentRole => {
     if (mode === "parent1" || mode === "parent2") {
@@ -1129,10 +1124,10 @@ export default function CalendarPage() {
 
     const existingSet = new Set(existingRows);
     const inserts: Array<Record<string, unknown>> = [];
-    const dayByType: Array<{ day: number | null; label: string }> = [
-    { day: config.garbageDay, label: "ordures" },
-    { day: config.recyclingDay, label: "recyclage" },
-    { day: config.compostDay, label: "compost" },
+    const dayByType: Array<{ day: number | null; label: string; cycle: "weekly" | "A" | "B" }> = [
+    { day: config.garbageDay, label: "ordures", cycle: config.garbageCycle },
+    { day: config.recyclingDay, label: "recyclage", cycle: config.recyclingCycle },
+    { day: config.compostDay, label: "compost", cycle: config.compostCycle },
     ];
 
     const [hourRaw, minuteRaw] = config.reminderTime.split(":");
@@ -1146,7 +1141,7 @@ export default function CalendarPage() {
       continue;
      }
 
-     if (!shouldCollectOnDate(cursor, config.frequence, config.semuinesAlternees)) {
+    if (!shouldCollectOnDate(cursor, definition.cycle)) {
       cursor.setDate(cursor.getDate() + 1);
       continue;
      }
@@ -1497,8 +1492,9 @@ export default function CalendarPage() {
   setCollectesCompostDay(`${source?.compostDay ?? 5}`);
   setCollectesReminderTime(source?.reminderTime ?? "20:00");
   setCollectesAssignmentMode(source?.assignmentMode ?? "alternate");
-  setCollectesFrequence(source?.frequence ?? "weekly");
-  setCollectesSemuinesAlternees(source?.semuinesAlternees ?? null);
+  setCollectesGarbageCycle(source?.garbageCycle ?? "weekly");
+  setCollectesRecyclingCycle(source?.recyclingCycle ?? "weekly");
+  setCollectesCompostCycle(source?.compostCycle ?? "weekly");
  };
 
  const closeCollectesForm = () => {
@@ -1706,16 +1702,20 @@ export default function CalendarPage() {
     const dateDebut = formatForDateInput(new Date());
     const sharedFields = {
      family_id: currentFamilyId,
-     frequence: collectesFrequence,
      assignment_mode: collectesAssignmentMode,
      heure_rappel: collectesReminderTime,
      date_debut: dateDebut,
-     semaines_alternees: collectesFrequence === "biweekly" ? collectesSemuinesAlternees : null,
     };
+
+    const toFreqPayload = (cycle: "weekly" | "A" | "B") => ({
+     frequence: cycle === "weekly" ? "weekly" : "biweekly",
+     semaines_alternees: cycle === "weekly" ? null : cycle,
+    });
 
     const payloadByType = [
      {
       ...sharedFields,
+      ...toFreqPayload(collectesGarbageCycle),
       type: "ordures",
       jour_semaine: Number(collectesGarbageDay),
       nom: "Collecte ordures",
@@ -1724,6 +1724,7 @@ export default function CalendarPage() {
      },
      {
       ...sharedFields,
+      ...toFreqPayload(collectesRecyclingCycle),
       type: "recyclage",
       jour_semaine: Number(collectesRecyclingDay),
       nom: "Collecte recyclage",
@@ -1732,6 +1733,7 @@ export default function CalendarPage() {
      },
      {
       ...sharedFields,
+      ...toFreqPayload(collectesCompostCycle),
       type: "compost",
       jour_semaine: Number(collectesCompostDay),
       nom: "Collecte compost",
@@ -1740,9 +1742,19 @@ export default function CalendarPage() {
      },
     ];
 
-    const modernWrite = await supabase.from("collectes").upsert(payloadByType, { onConflict: "family_id,type" });
+    const modernDelete = await supabase.from("collectes").delete().eq("family_id", currentFamilyId);
+    if (modernDelete.error) {
+     throw new Error(modernDelete.error.message);
+    }
+
+    const modernWrite = await supabase.from("collectes").insert(payloadByType);
 
     if (modernWrite.error) {
+     const modernMissingColumn = /column|schema cache|does not exist|could not find/i.test(modernWrite.error.message);
+     if (!modernMissingColumn) {
+      throw new Error(modernWrite.error.message);
+     }
+
      const legacyPayload = {
       family_id: currentFamilyId,
       garbage_day: Number(collectesGarbageDay),
@@ -1750,8 +1762,8 @@ export default function CalendarPage() {
       compost_day: Number(collectesCompostDay),
       reminder_time: collectesReminderTime,
       assignment_mode: collectesAssignmentMode,
-      frequence: collectesFrequence,
-      semaines_alternees: collectesFrequence === "biweekly" ? collectesSemuinesAlternees : null,
+      frequence: "weekly",
+      semaines_alternees: null,
       created_by: user.id,
       updated_at: new Date().toISOString(),
      };
@@ -2340,14 +2352,14 @@ export default function CalendarPage() {
     }
 
     const now = new Date();
-    const resolveNextDate = (day: number | null): string => {
+    const resolveNextDate = (day: number | null, cycle: "weekly" | "A" | "B"): string => {
       if (day === null) {
         return "Non configuré";
       }
 
       const cursor = new Date(now);
-      for (let step = 0; step < 8; step += 1) {
-        if (cursor.getDay() === day) {
+      for (let step = 0; step < 21; step += 1) {
+        if (cursor.getDay() === day && shouldCollectOnDate(cursor, cycle)) {
           return cursor.toLocaleDateString("fr-CA", { weekday: "long", day: "2-digit", month: "2-digit" });
         }
         cursor.setDate(cursor.getDate() + 1);
@@ -2355,20 +2367,33 @@ export default function CalendarPage() {
       return "Non configuré";
     };
 
+    const cycleLabel = (cycle: "weekly" | "A" | "B"): string => {
+      if (cycle === "A") {
+        return "Semaine A";
+      }
+      if (cycle === "B") {
+        return "Semaine B";
+      }
+      return "Chaque semaine";
+    };
+
     const dayLabel = (day: number | null): string => WEEKDAY_OPTIONS.find((item) => item.jsDay === day)?.label ?? "Non défini";
 
     return {
       garbage: {
         day: dayLabel(collectesConfig.garbageDay),
-        next: resolveNextDate(collectesConfig.garbageDay),
+        cycle: cycleLabel(collectesConfig.garbageCycle),
+        next: resolveNextDate(collectesConfig.garbageDay, collectesConfig.garbageCycle),
       },
       recycling: {
         day: dayLabel(collectesConfig.recyclingDay),
-        next: resolveNextDate(collectesConfig.recyclingDay),
+        cycle: cycleLabel(collectesConfig.recyclingCycle),
+        next: resolveNextDate(collectesConfig.recyclingDay, collectesConfig.recyclingCycle),
       },
       compost: {
         day: dayLabel(collectesConfig.compostDay),
-        next: resolveNextDate(collectesConfig.compostDay),
+        cycle: cycleLabel(collectesConfig.compostCycle),
+        next: resolveNextDate(collectesConfig.compostDay, collectesConfig.compostCycle),
       },
       reminder: collectesConfig.reminderTime,
     };
@@ -3240,16 +3265,19 @@ export default function CalendarPage() {
        <div className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm text-[#2C2420]">
         <p className="font-semibold">🗑️ Ordures</p>
         <p>{collectesSummary.garbage.day}</p>
+          <p className="text-xs text-[#6B5D55]">{collectesSummary.garbage.cycle}</p>
         <p className="text-xs text-[#6B5D55]">Prochaine: {collectesSummary.garbage.next}</p>
        </div>
        <div className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm text-[#2C2420]">
         <p className="font-semibold">♻️ Recyclage</p>
         <p>{collectesSummary.recycling.day}</p>
+          <p className="text-xs text-[#6B5D55]">{collectesSummary.recycling.cycle}</p>
         <p className="text-xs text-[#6B5D55]">Prochaine: {collectesSummary.recycling.next}</p>
        </div>
        <div className="rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm text-[#2C2420]">
         <p className="font-semibold">🌱 Compost</p>
         <p>{collectesSummary.compost.day}</p>
+          <p className="text-xs text-[#6B5D55]">{collectesSummary.compost.cycle}</p>
         <p className="text-xs text-[#6B5D55]">Prochaine: {collectesSummary.compost.next}</p>
        </div>
       </div>
@@ -3712,6 +3740,22 @@ export default function CalendarPage() {
         </select>
        </div>
 
+        <div>
+         <label htmlFor="garbageCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+         Ordures : cycle
+         </label>
+         <select
+         id="garbageCycle"
+         value={collectesGarbageCycle}
+         onChange={(event) => setCollectesGarbageCycle(event.target.value as "weekly" | "A" | "B")}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+         >
+         <option value="weekly">Chaque semaine</option>
+         <option value="A">Semaine A</option>
+         <option value="B">Semaine B</option>
+         </select>
+        </div>
+
        <div>
         <label htmlFor="startAt" className="mb-1 block text-sm font-medium text-[#6B5D55]">
          Date début
@@ -3801,6 +3845,22 @@ export default function CalendarPage() {
          ))}
         </select>
        </div>
+
+        <div>
+         <label htmlFor="recyclingCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+         Recyclage : cycle
+         </label>
+         <select
+         id="recyclingCycle"
+         value={collectesRecyclingCycle}
+         onChange={(event) => setCollectesRecyclingCycle(event.target.value as "weekly" | "A" | "B")}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+         >
+         <option value="weekly">Chaque semaine</option>
+         <option value="A">Semaine A</option>
+         <option value="B">Semaine B</option>
+         </select>
+        </div>
 
        <div>
         <label htmlFor="editStartAt" className="mb-1 block text-sm font-medium text-[#6B5D55]">
@@ -3998,6 +4058,22 @@ export default function CalendarPage() {
          <option value="parent2">Parent 2</option>
         </select>
        </div>
+
+        <div>
+         <label htmlFor="compostCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">
+         Compost : cycle
+         </label>
+         <select
+         id="compostCycle"
+         value={collectesCompostCycle}
+         onChange={(event) => setCollectesCompostCycle(event.target.value as "weekly" | "A" | "B")}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+         >
+         <option value="weekly">Chaque semaine</option>
+         <option value="A">Semaine A</option>
+         <option value="B">Semaine B</option>
+         </select>
+        </div>
 
        <div>
         <label htmlFor="journalEditNotes" className="mb-1 block text-sm font-medium text-[#6B5D55]">
@@ -4343,44 +4419,9 @@ export default function CalendarPage() {
         />
        </div>
 
-       <div>
-        <label htmlFor="frequence" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-        Fréquence de collecte
-        </label>
-        <select
-        id="frequence"
-        value={collectesFrequence}
-        onChange={(event) => {
-         setCollectesFrequence(event.target.value as "weekly" | "biweekly" | "monthly");
-         if (event.target.value !== "biweekly") {
-          setCollectesSemuinesAlternees(null);
-         }
-        }}
-        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-        <option value="weekly">Chaque semaine</option>
-        <option value="biweekly">Aux 2 semaines (alternées)</option>
-        <option value="monthly">Aux 4 semaines</option>
-        </select>
-       </div>
-
-       {collectesFrequence === "biweekly" && (
-        <div>
-         <label htmlFor="semuinesAlternees" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-         Cette collecte a lieu quelle semaine ?
-         </label>
-         <select
-         id="semuinesAlternees"
-         value={collectesSemuinesAlternees || ""}
-         onChange={(event) => setCollectesSemuinesAlternees((event.target.value as "A" | "B") || null)}
-         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-         >
-         <option value="">Sélectionner...</option>
-         <option value="A">Semaine A (semaines impaires)</option>
-         <option value="B">Semaine B (semaines paires)</option>
-         </select>
-        </div>
-       )}
+      <p className="rounded-lg border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-xs text-[#6B5D55]">
+       Astuce simple: si tu veux alterner sans erreur, mets <span className="font-semibold">Ordures = Semaine A</span> et <span className="font-semibold">Recyclage = Semaine B</span>.
+      </p>
 
        <div>
         <label htmlFor="assignmentMode" className="mb-1 block text-sm font-medium text-[#6B5D55]">
