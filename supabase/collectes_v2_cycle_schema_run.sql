@@ -1,0 +1,240 @@
+-- Migrate public.collectes to per-type rows with simple A/B cycle support
+-- Run this script in Supabase SQL editor.
+
+create extension if not exists "pgcrypto";
+
+create table if not exists public.collectes (
+  id uuid primary key default gen_random_uuid(),
+  family_id uuid not null references public.families(id) on delete cascade
+);
+
+alter table if exists public.collectes
+add column if not exists family_id uuid references public.families(id) on delete cascade;
+
+alter table if exists public.collectes
+add column if not exists type text;
+
+alter table if exists public.collectes
+add column if not exists jour_semaine smallint;
+
+alter table if exists public.collectes
+add column if not exists frequence text;
+
+alter table if exists public.collectes
+add column if not exists semaines_alternees text;
+
+alter table if exists public.collectes
+add column if not exists assignment_mode text;
+
+alter table if exists public.collectes
+add column if not exists heure_rappel time;
+
+alter table if exists public.collectes
+add column if not exists nom text;
+
+alter table if exists public.collectes
+add column if not exists couleur text;
+
+alter table if exists public.collectes
+add column if not exists icone text;
+
+alter table if exists public.collectes
+add column if not exists date_debut date;
+
+alter table if exists public.collectes
+add column if not exists created_by uuid references auth.users(id) on delete set null;
+
+alter table if exists public.collectes
+add column if not exists created_at timestamptz;
+
+alter table if exists public.collectes
+add column if not exists updated_at timestamptz;
+
+update public.collectes
+set frequence = 'weekly'
+where frequence is null;
+
+update public.collectes
+set assignment_mode = 'alternate'
+where assignment_mode is null;
+
+update public.collectes
+set heure_rappel = coalesce(heure_rappel, reminder_time, '20:00'::time)
+where heure_rappel is null;
+
+update public.collectes
+set date_debut = current_date
+where date_debut is null;
+
+update public.collectes
+set created_at = now()
+where created_at is null;
+
+update public.collectes
+set updated_at = now()
+where updated_at is null;
+
+update public.collectes
+set type = 'ordures',
+    jour_semaine = coalesce(jour_semaine, garbage_day),
+    nom = coalesce(nullif(nom, ''), 'Collecte ordures'),
+    couleur = coalesce(nullif(couleur, ''), '#7F8C8D'),
+    icone = coalesce(nullif(icone, ''), 'Trash2')
+where type is null;
+
+insert into public.collectes (
+  family_id,
+  type,
+  jour_semaine,
+  frequence,
+  semaines_alternees,
+  assignment_mode,
+  heure_rappel,
+  nom,
+  couleur,
+  icone,
+  date_debut,
+  created_by,
+  created_at,
+  updated_at
+)
+select
+  family_id,
+  'recyclage',
+  recycling_day,
+  coalesce(frequence, 'weekly'),
+  semaines_alternees,
+  coalesce(assignment_mode, 'alternate'),
+  coalesce(heure_rappel, reminder_time, '20:00'::time),
+  'Collecte recyclage',
+  '#27AE60',
+  'RefreshCw',
+  coalesce(date_debut, current_date),
+  created_by,
+  coalesce(created_at, now()),
+  coalesce(updated_at, now())
+from public.collectes source
+where recycling_day is not null
+  and not exists (
+    select 1
+    from public.collectes target
+    where target.family_id = source.family_id
+      and target.type = 'recyclage'
+  );
+
+insert into public.collectes (
+  family_id,
+  type,
+  jour_semaine,
+  frequence,
+  semaines_alternees,
+  assignment_mode,
+  heure_rappel,
+  nom,
+  couleur,
+  icone,
+  date_debut,
+  created_by,
+  created_at,
+  updated_at
+)
+select
+  family_id,
+  'compost',
+  compost_day,
+  coalesce(frequence, 'weekly'),
+  semaines_alternees,
+  coalesce(assignment_mode, 'alternate'),
+  coalesce(heure_rappel, reminder_time, '20:00'::time),
+  'Collecte compost',
+  '#8B6914',
+  'Leaf',
+  coalesce(date_debut, current_date),
+  created_by,
+  coalesce(created_at, now()),
+  coalesce(updated_at, now())
+from public.collectes source
+where compost_day is not null
+  and not exists (
+    select 1
+    from public.collectes target
+    where target.family_id = source.family_id
+      and target.type = 'compost'
+  );
+
+alter table public.collectes
+alter column type set not null;
+
+alter table public.collectes
+alter column frequence set default 'weekly';
+
+alter table public.collectes
+alter column assignment_mode set default 'alternate';
+
+alter table public.collectes
+alter column heure_rappel set default '20:00';
+
+alter table public.collectes
+alter column created_at set default now();
+
+alter table public.collectes
+alter column updated_at set default now();
+
+alter table public.collectes
+drop constraint if exists collectes_family_unique;
+
+alter table public.collectes
+drop constraint if exists collectes_type_check;
+
+alter table public.collectes
+add constraint collectes_type_check
+check (type in ('ordures', 'recyclage', 'compost'));
+
+alter table public.collectes
+drop constraint if exists collectes_jour_semaine_check;
+
+alter table public.collectes
+add constraint collectes_jour_semaine_check
+check (jour_semaine between 0 and 6);
+
+alter table public.collectes
+drop constraint if exists collectes_assignment_mode_check;
+
+alter table public.collectes
+add constraint collectes_assignment_mode_check
+check (assignment_mode in ('parent1', 'parent2', 'alternate'));
+
+alter table public.collectes
+drop constraint if exists collectes_frequence_check;
+
+alter table public.collectes
+add constraint collectes_frequence_check
+check (frequence in ('weekly', 'biweekly'));
+
+alter table public.collectes
+drop constraint if exists collectes_semaines_alternees_check;
+
+alter table public.collectes
+add constraint collectes_semaines_alternees_check
+check (semaines_alternees in ('A', 'B') or semaines_alternees is null);
+
+alter table public.collectes
+add constraint collectes_family_type_unique unique (family_id, type);
+
+create index if not exists collectes_family_type_idx on public.collectes(family_id, type);
+
+create or replace function public.set_collectes_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_collectes_updated_at on public.collectes;
+create trigger trg_collectes_updated_at
+before update on public.collectes
+for each row
+execute function public.set_collectes_updated_at();
