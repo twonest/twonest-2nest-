@@ -50,6 +50,48 @@ add column if not exists created_at timestamptz;
 alter table if exists public.collectes
 add column if not exists updated_at timestamptz;
 
+create or replace function pg_temp.normalize_collecte_weekday(value text)
+returns smallint
+language sql
+immutable
+as $$
+  select case
+    when value is null then null
+    when btrim(lower(value)) = '' then null
+    when btrim(lower(value)) ~ '^[0-6]$' then btrim(value)::smallint
+    when btrim(lower(value)) in ('dimanche', 'sunday') then 0
+    when btrim(lower(value)) in ('lundi', 'monday') then 1
+    when btrim(lower(value)) in ('mardi', 'tuesday') then 2
+    when btrim(lower(value)) in ('mercredi', 'wednesday') then 3
+    when btrim(lower(value)) in ('jeudi', 'thursday') then 4
+    when btrim(lower(value)) in ('vendredi', 'friday') then 5
+    when btrim(lower(value)) in ('samedi', 'saturday') then 6
+    else null
+  end;
+$$;
+
+do $$
+declare
+  jour_semaine_type text;
+begin
+  select c.data_type
+  into jour_semaine_type
+  from information_schema.columns c
+  where c.table_schema = 'public'
+    and c.table_name = 'collectes'
+    and c.column_name = 'jour_semaine';
+
+  if jour_semaine_type is not null
+     and jour_semaine_type not in ('smallint', 'integer', 'bigint') then
+    execute '
+      alter table public.collectes
+      alter column jour_semaine type smallint
+      using pg_temp.normalize_collecte_weekday(jour_semaine::text)
+    ';
+  end if;
+end;
+$$;
+
 update public.collectes
 set frequence = 'weekly'
 where frequence is null;
@@ -92,6 +134,10 @@ update public.collectes
 set updated_at = now()
 where updated_at is null;
 
+update public.collectes
+set jour_semaine = pg_temp.normalize_collecte_weekday(jour_semaine::text)
+where jour_semaine is distinct from pg_temp.normalize_collecte_weekday(jour_semaine::text);
+
 do $$
 begin
   if exists (
@@ -104,7 +150,7 @@ begin
     execute '
       update public.collectes
       set type = ''ordures'',
-          jour_semaine = coalesce(jour_semaine, garbage_day),
+          jour_semaine = coalesce(jour_semaine, pg_temp.normalize_collecte_weekday(garbage_day::text)),
           nom = coalesce(nullif(nom, ''''), ''Collecte ordures''),
           couleur = coalesce(nullif(couleur, ''''), ''#7F8C8D''),
           icone = coalesce(nullif(icone, ''''), ''Trash2'')
@@ -157,7 +203,7 @@ begin
         select
           family_id,
           ''recyclage'',
-          recycling_day,
+          pg_temp.normalize_collecte_weekday(recycling_day::text),
           coalesce(frequence, ''weekly''),
           semaines_alternees,
           coalesce(assignment_mode, ''alternate''),
@@ -170,7 +216,7 @@ begin
           coalesce(created_at, now()),
           coalesce(updated_at, now())
         from public.collectes source
-        where recycling_day is not null
+        where pg_temp.normalize_collecte_weekday(recycling_day::text) is not null
           and not exists (
             select 1
             from public.collectes target
@@ -199,7 +245,7 @@ begin
         select
           family_id,
           ''recyclage'',
-          recycling_day,
+          pg_temp.normalize_collecte_weekday(recycling_day::text),
           coalesce(frequence, ''weekly''),
           semaines_alternees,
           coalesce(assignment_mode, ''alternate''),
@@ -212,7 +258,7 @@ begin
           coalesce(created_at, now()),
           coalesce(updated_at, now())
         from public.collectes source
-        where recycling_day is not null
+        where pg_temp.normalize_collecte_weekday(recycling_day::text) is not null
           and not exists (
             select 1
             from public.collectes target
@@ -261,7 +307,7 @@ begin
         select
           family_id,
           ''compost'',
-          compost_day,
+          pg_temp.normalize_collecte_weekday(compost_day::text),
           coalesce(frequence, ''weekly''),
           semaines_alternees,
           coalesce(assignment_mode, ''alternate''),
@@ -274,7 +320,7 @@ begin
           coalesce(created_at, now()),
           coalesce(updated_at, now())
         from public.collectes source
-        where compost_day is not null
+        where pg_temp.normalize_collecte_weekday(compost_day::text) is not null
           and not exists (
             select 1
             from public.collectes target
@@ -303,7 +349,7 @@ begin
         select
           family_id,
           ''compost'',
-          compost_day,
+          pg_temp.normalize_collecte_weekday(compost_day::text),
           coalesce(frequence, ''weekly''),
           semaines_alternees,
           coalesce(assignment_mode, ''alternate''),
@@ -316,7 +362,7 @@ begin
           coalesce(created_at, now()),
           coalesce(updated_at, now())
         from public.collectes source
-        where compost_day is not null
+        where pg_temp.normalize_collecte_weekday(compost_day::text) is not null
           and not exists (
             select 1
             from public.collectes target
