@@ -4352,58 +4352,113 @@ export default function CalendarPage() {
       )}
 
       <form className="space-y-4" onSubmit={onSaveCollectes}>
-       <div>
-        <label htmlFor="garbageDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-        Ordures ménagères : quel jour ?
-        </label>
-        <select
-        id="garbageDay"
-        value={collectesGarbageDay}
-        onChange={(event) => setCollectesGarbageDay(event.target.value)}
-        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
-        >
-        {WEEKDAY_OPTIONS.map((day) => (
-         <option key={`garbage-${day.jsDay}`} value={day.jsDay}>
-          {day.label}
-         </option>
-        ))}
-        </select>
-       </div>
+       <div className="rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] p-4">
+        <p className="text-xs font-semibold tracking-[0.14em] text-[#A89080]">RÈGLE PAR TYPE DE COLLECTE</p>
+        <p className="mt-2 text-sm text-[#6B5D55]">Pour chaque type, choisis simplement un jour et un cycle: <span className="font-semibold">Chaque semaine</span>, <span className="font-semibold">Semaine A</span> ou <span className="font-semibold">Semaine B</span>.</p>
 
-       <div>
-        <label htmlFor="recyclingDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-        Recyclage : quel jour ?
-        </label>
+        <div className="mt-4 space-y-3">
+         <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
+          <p className="text-sm font-semibold text-[#2C2420]">🗑️ Ordures ménagères</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+           <div>
+        <label htmlFor="garbageDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
         <select
-        id="recyclingDay"
-        value={collectesRecyclingDay}
-        onChange={(event) => setCollectesRecyclingDay(event.target.value)}
-        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+         id="garbageDay"
+         value={collectesGarbageDay}
+         onChange={(event) => setCollectesGarbageDay(event.target.value)}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
         >
-        {WEEKDAY_OPTIONS.map((day) => (
-         <option key={`recycling-${day.jsDay}`} value={day.jsDay}>
-          {day.label}
-         </option>
-        ))}
+         {WEEKDAY_OPTIONS.map((day) => (
+          <option key={`garbage-${day.jsDay}`} value={day.jsDay}>
+           {day.label}
+          </option>
+         ))}
         </select>
-       </div>
+           </div>
+           <div>
+        <label htmlFor="garbageCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
+        <select
+         id="garbageCycle"
+         value={collectesGarbageCycle}
+         onChange={(event) => setCollectesGarbageCycle(event.target.value as "weekly" | "A" | "B")}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+         <option value="weekly">Chaque semaine</option>
+         <option value="A">Semaine A</option>
+         <option value="B">Semaine B</option>
+        </select>
+           </div>
+          </div>
+         </div>
 
-       <div>
-        <label htmlFor="compostDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">
-        Compost : quel jour ?
-        </label>
+         <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
+          <p className="text-sm font-semibold text-[#2C2420]">♻️ Recyclage</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+           <div>
+        <label htmlFor="recyclingDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
         <select
-        id="compostDay"
-        value={collectesCompostDay}
-        onChange={(event) => setCollectesCompostDay(event.target.value)}
-        className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+         id="recyclingDay"
+         value={collectesRecyclingDay}
+         onChange={(event) => setCollectesRecyclingDay(event.target.value)}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
         >
-        {WEEKDAY_OPTIONS.map((day) => (
-         <option key={`compost-${day.jsDay}`} value={day.jsDay}>
-          {day.label}
-         </option>
-        ))}
+         {WEEKDAY_OPTIONS.map((day) => (
+          <option key={`recycling-${day.jsDay}`} value={day.jsDay}>
+           {day.label}
+          </option>
+         ))}
         </select>
+           </div>
+           <div>
+        <label htmlFor="recyclingCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
+        <select
+         id="recyclingCycle"
+         value={collectesRecyclingCycle}
+         onChange={(event) => setCollectesRecyclingCycle(event.target.value as "weekly" | "A" | "B")}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+         <option value="weekly">Chaque semaine</option>
+         <option value="A">Semaine A</option>
+         <option value="B">Semaine B</option>
+        </select>
+           </div>
+          </div>
+         </div>
+
+         <div className="rounded-xl border border-[#D9D0C8] bg-white p-3">
+          <p className="text-sm font-semibold text-[#2C2420]">🌱 Compost</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+           <div>
+        <label htmlFor="compostDay" className="mb-1 block text-sm font-medium text-[#6B5D55]">Jour</label>
+        <select
+         id="compostDay"
+         value={collectesCompostDay}
+         onChange={(event) => setCollectesCompostDay(event.target.value)}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+         {WEEKDAY_OPTIONS.map((day) => (
+          <option key={`compost-${day.jsDay}`} value={day.jsDay}>
+           {day.label}
+          </option>
+         ))}
+        </select>
+           </div>
+           <div>
+        <label htmlFor="compostCycle" className="mb-1 block text-sm font-medium text-[#6B5D55]">Cycle</label>
+        <select
+         id="compostCycle"
+         value={collectesCompostCycle}
+         onChange={(event) => setCollectesCompostCycle(event.target.value as "weekly" | "A" | "B")}
+         className="w-full rounded-xl border border-[#D9D0C8] bg-white px-3 py-2.5 text-[#2C2420]"
+        >
+         <option value="weekly">Chaque semaine</option>
+         <option value="A">Semaine A</option>
+         <option value="B">Semaine B</option>
+        </select>
+           </div>
+          </div>
+         </div>
+        </div>
        </div>
 
        <div>
