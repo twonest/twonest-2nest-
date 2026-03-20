@@ -431,6 +431,14 @@ function toDateOnlyKey(date: Date): string {
  return `${year}-${month}-${day}`;
 }
 
+const SHIFT_OCCURRENCE_DELETION_MARKER = "__shift_occurrence_deleted__";
+
+function buildShiftOccurrenceKey(shiftId: string, start: Date): string {
+ const hours = `${start.getHours()}`.padStart(2, "0");
+ const minutes = `${start.getMinutes()}`.padStart(2, "0");
+ return `${shiftId}|${toDateOnlyKey(start)}|${hours}:${minutes}`;
+}
+
 function parseIsoDate(value: string | null | undefined): Date | null {
  if (!value) {
   return null;
@@ -1678,6 +1686,77 @@ export default function CalendarPage() {
   }
  };
 
+ const deleteShiftOccurrence = async (shift: CalendarWorkShiftEvent) => {
+  if (!currentFamilyId || !user || isReadOnly) {
+   return;
+  }
+
+  setIsDeletingShift(true);
+  setShiftError("");
+
+  try {
+   const supabase = getSupabaseBrowserClient();
+   const occurrenceReason = shift.reason && shift.reason.trim().length > 0
+    ? `${SHIFT_OCCURRENCE_DELETION_MARKER} ${shift.reason.trim()}`
+    : SHIFT_OCCURRENCE_DELETION_MARKER;
+
+   const basePayload: Record<string, unknown> = {
+    family_id: currentFamilyId,
+    user_id: shift.userId,
+    title: shift.title,
+    shift_type: shift.shiftType,
+    start_at: shift.start.toISOString(),
+    end_at: shift.end.toISOString(),
+    location: shift.location,
+    color: shift.color,
+    recurrence_mode: "once",
+    recurrence_days: null,
+    recurrence_start: null,
+    recurrence_end: null,
+    frequency: null,
+    cycle_length_days: null,
+    is_override: true,
+    base_shift_id: shift.sourceShiftId,
+    reason: occurrenceReason,
+    notify_coparent: shift.notifyCoparent,
+   };
+
+   const persistPayloadWithoutCycle = () => {
+    const { cycle_length_days: _ignoredCycleLengthDays, ...rest } = basePayload;
+    return rest;
+   };
+
+   let insert = await supabase.from("work_shifts").insert(basePayload);
+   if (insert.error && insert.error.message.toLowerCase().includes("cycle_length_days")) {
+    insert = await supabase.from("work_shifts").insert(persistPayloadWithoutCycle());
+   }
+   if (insert.error) {
+    throw new Error(insert.error.message);
+   }
+
+   const notificationError = await notifyCoparentAboutShift(supabase, {
+    action: "suppression",
+    title: shift.title,
+    start: shift.start,
+    end: shift.end,
+    location: shift.location,
+    reason: shift.reason,
+    notifyCoparent: shift.notifyCoparent,
+   });
+
+   await refreshWorkShifts(supabase, currentFamilyId);
+   setActiveShiftMenu(null);
+   setToast({
+    message: notificationError ? "Occurrence supprimée. Notification non envoyée." : "Occurrence supprimée.",
+    variant: "success",
+   });
+  } catch (error) {
+   setShiftError(error instanceof Error ? error.message : "Impossible de supprimer cette occurrence.");
+  } finally {
+   setIsDeletingShift(false);
+  }
+ };
+
  const onDeleteShift = async () => {
   if (!shiftTargetId) {
    return;
@@ -2466,6 +2545,22 @@ export default function CalendarPage() {
     const visibleEnd = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 2, 0, 23, 59, 59, 999);
     const eventsList: CalendarWorkShiftEvent[] = [];
 
+    const deletedOccurrenceKeys = new Set<string>();
+    for (const row of workShiftRows) {
+     const isOverride = Boolean(row.is_override);
+     const baseShiftId = typeof row.base_shift_id === "string" ? row.base_shift_id : "";
+     const reason = typeof row.reason === "string" ? row.reason : "";
+     if (!isOverride || !baseShiftId || !reason.startsWith(SHIFT_OCCURRENCE_DELETION_MARKER)) {
+      continue;
+     }
+
+     const deletedStart = parseIsoDate(row.start_at);
+     if (!deletedStart) {
+      continue;
+     }
+     deletedOccurrenceKeys.add(buildShiftOccurrenceKey(baseShiftId, deletedStart));
+    }
+
     for (const row of workShiftRows) {
      const id = row.id ? String(row.id) : "";
      const userId = typeof row.user_id === "string" ? row.user_id : "";
@@ -2490,12 +2585,23 @@ export default function CalendarPage() {
      const recurrenceEnd = typeof row.recurrence_end === "string" ? row.recurrence_end : null;
      const cycleLengthDays = typeof row.cycle_length_days === "number" ? row.cycle_length_days : null;
      const durationMs = templateEnd.getTime() - templateStart.getTime();
+    const isDeletionOverride = Boolean(row.is_override)
+     && typeof row.reason === "string"
+     && row.reason.startsWith(SHIFT_OCCURRENCE_DELETION_MARKER);
+
+    if (isDeletionOverride) {
+     continue;
+    }
 
      const pushOccurrence = (occurrenceStart: Date, suffix: string) => {
       const occurrenceEnd = new Date(occurrenceStart.getTime() + durationMs);
       if (!dateRangesOverlap(occurrenceStart, occurrenceEnd, visibleStart, visibleEnd)) {
        return;
       }
+
+     if (!Boolean(row.is_override) && deletedOccurrenceKeys.has(buildShiftOccurrenceKey(id, occurrenceStart))) {
+      return;
+     }
 
       eventsList.push({
        id: `shift-${id}-${suffix}`,
@@ -3931,21 +4037,25 @@ export default function CalendarPage() {
         setActiveShiftMenu(null);
         const confirmed = window.confirm(
          current.recurrenceMode === "recurring"
-          ? "Supprimer cet horaire de travail récurrent ?"
+            ? "Supprimer seulement cette occurrence ?"
           : "Supprimer ce shift ?",
         );
         if (!confirmed) {
          return;
         }
-        void deleteShiftById(current.sourceShiftId, {
-         title: current.title,
-         start: current.start,
-         end: current.end,
-         location: current.location,
-         reason: current.reason,
-         notifyCoparent: current.notifyCoparent,
-         closeForm: false,
-        });
+          if (current.recurrenceMode === "recurring") {
+           void deleteShiftOccurrence(current);
+           return;
+          }
+          void deleteShiftById(current.sourceShiftId, {
+           title: current.title,
+           start: current.start,
+           end: current.end,
+           location: current.location,
+           reason: current.reason,
+           notifyCoparent: current.notifyCoparent,
+           closeForm: false,
+          });
         }}
         className="rounded-lg border border-[#D9D0C8] bg-[#F5F0EB] px-3 py-2 text-left text-sm font-semibold text-[#A85C52] transition hover:bg-[#FFECEF]"
        >
