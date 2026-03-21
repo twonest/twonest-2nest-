@@ -353,25 +353,5 @@ export default function DashboardPage() {
     </div>
   );
 }
-                href={module.href}
-                className="group block rounded-2xl border border-[#D9D0C8] bg-white p-6 shadow-sm hover:shadow-md hover:-translate-y-1 transition"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#7C6B5D]/10 mb-4">
-                      <Icon size={20} className="text-[#7C6B5D]" />
-                    </div>
-                    <h3 className="text-lg font-bold text-[#2C2420]">{module.label}</h3>
-                    <p className="mt-2 text-sm text-[#6B5D55]">{description}</p>
-                  </div>
-                  <ChevronRight size={18} className="text-[#D9D0C8] group-hover:text-[#7C6B5D] transition flex-shrink-0 mt-1" />
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-      </main>
-    </div>
-  );
 }
 
