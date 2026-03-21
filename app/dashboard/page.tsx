@@ -11,7 +11,6 @@ import { familyRoleLabel } from "@/lib/family";
 // Utilitaires
 function formatDateFr(date: Date, opts: Intl.DateTimeFormatOptions = { weekday: "long", year: "numeric", month: "long", day: "numeric" }) {
   return date.toLocaleDateString("fr-FR", opts);
-}
 function formatShortDate(date: string) {
   return formatDateFr(new Date(date), { weekday: "short", day: "numeric", month: "short" });
 }
