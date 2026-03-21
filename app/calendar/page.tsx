@@ -7,34 +7,39 @@ import "moment/locale/fr";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
- ArrowLeft,
- ArrowLeftRight,
- BookOpen,
- Briefcase,
- Calendar as CalendarIcon,
- CheckCircle,
- ChevronLeft,
- ChevronRight,
- Clock,
- Download,
- Eye,
- GraduationCap,
- Leaf,
- Loader,
- Pencil,
- PlusCircle,
- RefreshCcw,
- RefreshCw,
- School,
- ShoppingCart,
- Stethoscope,
- Trash2,
- Trophy,
- UserCheck,
- X,
- XCircle,
- type LucideIcon,
+  ArrowLeft,
+  ArrowLeftRight,
+  BookOpen,
+  Briefcase,
+  Calendar as CalendarIcon,
+  CheckCircle,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Download,
+  Eye,
+  GraduationCap,
+  Leaf,
+  Loader,
+  Pencil,
+  PlusCircle,
+  RefreshCcw,
+  RefreshCw,
+  School,
+  ShoppingCart,
+  Stethoscope,
+  Trash2,
+  Trophy,
+  UserCheck,
+  X,
+  XCircle,
+  type LucideIcon,
+  Check,
 } from "lucide-react";
+// Menu contextuel pour action rapide sur tâche
+import { useRef } from "react";
+  const [taskContextMenu, setTaskContextMenu] = useState<{ x: number; y: number; taskId: string; status: string } | null>(null);
+  const calendarRef = useRef(null);
 import { Calendar, momentLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import type { User } from "@supabase/supabase-js";
@@ -625,6 +630,7 @@ export default function CalendarPage() {
  const [isCreating, setIsCreating] = useState(false);
  const [isUpdating, setIsUpdating] = useState(false);
  const [isDeleting, setIsDeleting] = useState(false);
+ const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
  const [isCreatingSwapRequest, setIsCreatingSwapRequest] = useState(false);
  const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
 
@@ -1671,13 +1677,14 @@ export default function CalendarPage() {
    });
 
    await refreshWorkShifts(supabase, currentFamilyId);
+   await refreshEvents(supabase, currentFamilyId);
    if (options?.closeForm !== false) {
-    closeShiftForm();
+     closeShiftForm();
    }
    setActiveShiftMenu(null);
    setToast({
-    message: notificationError ? "Shift supprimé. Notification non envoyée." : "Shift supprimé.",
-    variant: "success",
+     message: notificationError ? "Shift supprimé. Notification non envoyée." : "Shift supprimé.",
+     variant: "success",
    });
   } catch (error) {
    setShiftError(error instanceof Error ? error.message : "Impossible de supprimer le shift.");
@@ -1745,10 +1752,11 @@ export default function CalendarPage() {
    });
 
    await refreshWorkShifts(supabase, currentFamilyId);
+   await refreshEvents(supabase, currentFamilyId);
    setActiveShiftMenu(null);
    setToast({
-    message: notificationError ? "Occurrence supprimée. Notification non envoyée." : "Occurrence supprimée.",
-    variant: "success",
+     message: notificationError ? "Occurrence supprimée. Notification non envoyée." : "Occurrence supprimée.",
+     variant: "success",
    });
   } catch (error) {
    setShiftError(error instanceof Error ? error.message : "Impossible de supprimer cette occurrence.");
@@ -2136,35 +2144,28 @@ export default function CalendarPage() {
  };
 
  const onDeleteEvent = async () => {
-  if (isReadOnly) {
-   return;
-  }
-  if (!editingEventId) {
-   return;
-  }
-
-  setIsDeleting(true);
-  setEditError("");
-
-  try {
-   const supabase = getSupabaseBrowserClient();
-   await deleteEvent(supabase, editingEventId);
-
-   const journalDelete = await supabase.from("journal_garde").delete().eq("event_id", editingEventId);
-   if (journalDelete.error && !isJournalMissingColumnError(journalDelete.error.message, "event_id")) {
-    setEditError(journalDelete.error.message);
-    return;
+   if (isReadOnly) return;
+   if (!editingEventId) return;
+   setIsDeleting(true);
+   setEditError("");
+   try {
+     const supabase = getSupabaseBrowserClient();
+     await deleteEvent(supabase, editingEventId);
+     const journalDelete = await supabase.from("journal_garde").delete().eq("event_id", editingEventId);
+     if (journalDelete.error && !isJournalMissingColumnError(journalDelete.error.message, "event_id")) {
+       setEditError(journalDelete.error.message);
+       return;
+     }
+     await refreshJournalEntries(supabase);
+     await refreshEvents(supabase, currentFamilyId);
+     closeEditForm();
+     setToast({ message: "Événement supprimé.", variant: "success" });
+   } catch (error) {
+     setEditError(error instanceof Error ? error.message : "Erreur pendant la suppression de l'événement.");
+   } finally {
+     setIsDeleting(false);
+     setDeleteConfirmOpen(false);
    }
-   await refreshJournalEntries(supabase);
-
-  await refreshEvents(supabase, currentFamilyId);
-   closeEditForm();
-   setToast({ message: "Événement supprimé.", variant: "success" });
-  } catch (error) {
-   setEditError(error instanceof Error ? error.message : "Erreur pendant la suppression de l'événement.");
-  } finally {
-   setIsDeleting(false);
-  }
  };
 
  const onCreateSwapRequest = async (event: FormEvent<HTMLFormElement>) => {
@@ -3682,47 +3683,101 @@ export default function CalendarPage() {
           : `${event.title} · ${event.type}`
        }
        onSelectEvent={(event: CalendarDisplayEvent) => {
-        setGuardDateMenu(null);
-        if (event.kind === "shift") {
-         setActiveShiftMenu(event);
-         return;
-        }
-        if (event.kind === "special") {
-         return;
-        }
-        if (event.kind === "task") {
-         router.push("/tasks");
-         return;
-        }
-        if (event.kind === "collecte") {
-        return;
-        }
-        openEditForm(event);
+         setGuardDateMenu(null);
+         if (event.kind === "shift") {
+           setActiveShiftMenu(event);
+           return;
+         }
+         if (event.kind === "special") {
+           return;
+         }
+         if (event.kind === "task") {
+           router.push("/tasks");
+           return;
+         }
+         if (event.kind === "collecte") {
+           return;
+         }
+         openEditForm(event);
        }}
+       onDoubleClickEvent={(event, e) => {
+         if (event.kind === "task") {
+           e.preventDefault();
+           setTaskContextMenu({
+             x: e.clientX,
+             y: e.clientY,
+             taskId: event.id.replace("task-", ""),
+             status: event.taskStatus,
+           });
+         }
+       }}
+        // Action rapide : marquer la tâche comme faite
+        async function markTaskDone(taskId: string) {
+          try {
+            const supabase = getSupabaseBrowserClient();
+            await supabase.from("tasks").update({ status: "done", completed_at: new Date().toISOString() }).eq("id", taskId);
+            await refreshTasks(supabase, currentFamilyId);
+            setTaskContextMenu(null);
+            setToast({ message: "Tâche marquée comme faite.", variant: "success" });
+          } catch (error) {
+            setToast({ message: "Erreur lors de la mise à jour.", variant: "error" });
+          }
+        }
+        {/* Menu contextuel pour tâche */}
+        {taskContextMenu && (
+          <div
+            className="fixed z-[100] bg-black/10 left-0 top-0 w-full h-full"
+            onClick={() => setTaskContextMenu(null)}
+          >
+            <div
+              className="absolute min-w-[180px] rounded-xl border border-[#D9D0C8] bg-white p-3 shadow-lg"
+              style={{ left: taskContextMenu.x, top: taskContextMenu.y }}
+              onClick={e => e.stopPropagation()}
+            >
+              <p className="text-xs font-semibold text-[#A89080] mb-2">Tâche</p>
+              <button
+                type="button"
+                className="flex items-center gap-2 rounded-lg border border-[#D9D0C8] bg-[#EAF6EE] px-3 py-2 text-sm font-semibold text-[#2F5E43] hover:bg-[#B8DEC5] mb-1"
+                onClick={() => markTaskDone(taskContextMenu.taskId)}
+                disabled={taskContextMenu.status === "done"}
+              >
+                <Check size={16} /> Marquer comme fait
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-2 rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm font-semibold text-[#6B5D55] hover:bg-[#EFE7DD]"
+                onClick={() => router.push("/tasks")}
+              >
+                <Pencil size={16} /> Voir/éditer la tâche
+              </button>
+            </div>
+          </div>
+        )}
        onSelectSlot={(slotInfo) => {
         const selectedDate = slotInfo.start;
-
         if (!(selectedDate instanceof Date) || Number.isNaN(selectedDate.getTime())) {
-         setGuardDateMenu(null);
-         return;
+          setGuardDateMenu(null);
+          return;
         }
 
+        // Si un événement de garde existe ce jour-là, ouvrir le menu de garde comme avant
         const guardEvent = getGuardEventForDate(selectedDate);
-        if (!guardEvent) {
-         setGuardDateMenu(null);
-         return;
+        if (guardEvent) {
+          const box = (slotInfo as { box?: { x?: number; y?: number; left?: number; top?: number } }).box;
+          const x = typeof box?.x === "number" ? box.x : typeof box?.left === "number" ? box.left : 24;
+          const y = typeof box?.y === "number" ? box.y : typeof box?.top === "number" ? box.top : 24;
+          setGuardDateMenu({
+            dateKey: toDateOnlyKey(selectedDate),
+            eventId: guardEvent.id,
+            x,
+            y,
+          });
+          return;
         }
 
-        const box = (slotInfo as { box?: { x?: number; y?: number; left?: number; top?: number } }).box;
-        const x = typeof box?.x === "number" ? box.x : typeof box?.left === "number" ? box.left : 24;
-        const y = typeof box?.y === "number" ? box.y : typeof box?.top === "number" ? box.top : 24;
-
-        setGuardDateMenu({
-         dateKey: toDateOnlyKey(selectedDate),
-         eventId: guardEvent.id,
-         x,
-         y,
-        });
+        // Sinon, naviguer vers la page des tâches avec la date préremplie
+        const dateParam = selectedDate.toISOString().slice(0, 10); // format YYYY-MM-DD
+        router.push(`/tasks?dueDate=${dateParam}&add=1`);
        }}
        eventPropGetter={(event) => {
         if (event.kind === "special") {
@@ -4271,13 +4326,36 @@ export default function CalendarPage() {
         </button>
         <button
          type="button"
-         onClick={onDeleteEvent}
+         onClick={() => setDeleteConfirmOpen(true)}
          disabled={isUpdating || isDeleting}
          className="flex-1 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-3 text-sm font-semibold text-[#A85C52] transition hover:bg-[#FFECEF] disabled:cursor-not-allowed disabled:opacity-70"
         >
          <Trash2 size={14} className="mr-2 inline-flex" />
          {isDeleting ? "Suppression..." : "Supprimer"}
         </button>
+        {/* Modale de confirmation suppression événement */}
+        {deleteConfirmOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/30">
+            <div className="rounded-2xl border border-[#D9D0C8] bg-white p-6 shadow-xl max-w-xs w-full">
+              <h3 className="text-lg font-bold text-[#2C2420] mb-2">Supprimer l'événement ?</h3>
+              <p className="text-sm text-[#6B5D55] mb-4">Cette action est irréversible. Voulez-vous vraiment supprimer cet événement ?</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-[#D9D0C8] bg-[#F5F0EB] px-4 py-2 text-sm font-semibold text-[#6B5D55] hover:bg-[#EFE7DD]"
+                  onClick={() => setDeleteConfirmOpen(false)}
+                  disabled={isDeleting}
+                >Annuler</button>
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-[#D9D0C8] bg-[#FFECEF] px-4 py-2 text-sm font-semibold text-[#A85C52] hover:bg-[#FFD6D6]"
+                  onClick={onDeleteEvent}
+                  disabled={isDeleting}
+                >{isDeleting ? "Suppression..." : "Supprimer"}</button>
+              </div>
+            </div>
+          </div>
+        )}
        </div>
       </form>
      </div>

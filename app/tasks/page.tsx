@@ -331,6 +331,18 @@ function getInitials(name: string): string {
 }
 
 export default function TasksPage() {
+    // Préremplissage depuis le calendrier
+    useEffect(() => {
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const dueDateParam = params.get("dueDate");
+        const addParam = params.get("add");
+        if (addParam === "1" && dueDateParam) {
+          setDueDate(dueDateParam);
+          setIsAddModalOpen(true);
+        }
+      }
+    }, []);
   const router = useRouter();
   const { activeFamilyId, user: familyUser, currentRole, currentPermissions } = useFamily();
 
