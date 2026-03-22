@@ -1,4 +1,6 @@
+
 "use client";
+import { markTaskDone } from "./markTaskDone";
 
 import Link from "next/link";
 import jsPDF from "jspdf";
@@ -3702,57 +3704,18 @@ export default function CalendarPage() {
        }}
        onDoubleClickEvent={(event, e) => {
          if (event.kind === "task") {
-           e.preventDefault();
+           (e as React.MouseEvent<HTMLElement>).preventDefault();
            setTaskContextMenu({
-             x: e.clientX,
-             y: e.clientY,
+             x: (e as React.MouseEvent<HTMLElement>).clientX,
+             y: (e as React.MouseEvent<HTMLElement>).clientY,
              taskId: event.id.replace("task-", ""),
              status: event.taskStatus,
            });
          }
        }}
-        // Action rapide : marquer la tâche comme faite
-        async function markTaskDone(taskId: string) {
-          try {
-            const supabase = getSupabaseBrowserClient();
-            await supabase.from("tasks").update({ status: "done", completed_at: new Date().toISOString() }).eq("id", taskId);
-            await refreshTasks(supabase, currentFamilyId);
-            setTaskContextMenu(null);
-            setToast({ message: "Tâche marquée comme faite.", variant: "success" });
-          } catch (error) {
-            setToast({ message: "Erreur lors de la mise à jour.", variant: "error" });
-          }
-        }
-        {/* Menu contextuel pour tâche */}
-        {taskContextMenu && (
-          <div
-            className="fixed z-[100] bg-black/10 left-0 top-0 w-full h-full"
-            onClick={() => setTaskContextMenu(null)}
-          >
-            <div
-              className="absolute min-w-[180px] rounded-xl border border-[#D9D0C8] bg-white p-3 shadow-lg"
-              style={{ left: taskContextMenu.x, top: taskContextMenu.y }}
-              onClick={e => e.stopPropagation()}
-            >
-              <p className="text-xs font-semibold text-[#A89080] mb-2">Tâche</p>
-              <button
-                type="button"
-                className="flex items-center gap-2 rounded-lg border border-[#D9D0C8] bg-[#EAF6EE] px-3 py-2 text-sm font-semibold text-[#2F5E43] hover:bg-[#B8DEC5] mb-1"
-                onClick={() => markTaskDone(taskContextMenu.taskId)}
-                disabled={taskContextMenu.status === "done"}
-              >
-                <Check size={16} /> Marquer comme fait
-              </button>
-              <button
-                type="button"
-                className="flex items-center gap-2 rounded-lg border border-[#D9D0C8] bg-white px-3 py-2 text-sm font-semibold text-[#6B5D55] hover:bg-[#EFE7DD]"
-                onClick={() => router.push("/tasks")}
-              >
-                <Pencil size={16} /> Voir/éditer la tâche
-              </button>
-            </div>
-          </div>
-        )}
+
+
+
        onSelectSlot={(slotInfo) => {
         const selectedDate = slotInfo.start;
         if (!(selectedDate instanceof Date) || Number.isNaN(selectedDate.getTime())) {
