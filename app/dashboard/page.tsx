@@ -47,7 +47,10 @@ export default function DashboardPage() {
  
   // Chargement des données principales
   useEffect(() => {
-    if (!activeFamilyId) return;
+    if (!activeFamilyId) {
+  setLoading(false);
+  return;
+}
     setLoading(true);
     const supabase = getSupabaseBrowserClient();
     const today = new Date();
