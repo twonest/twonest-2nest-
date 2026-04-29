@@ -1,3 +1,4 @@
+"use client";
 import React, { useEffect, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { useFamily } from "@/components/FamilyProvider";

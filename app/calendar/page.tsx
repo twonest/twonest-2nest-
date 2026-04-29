@@ -5,6 +5,7 @@ import { markTaskDone } from "./markTaskDone";
 import Link from "next/link";
 import jsPDF from "jspdf";
 import moment from "moment";
+// @ts-ignore
 import "moment/locale/fr";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -40,8 +41,6 @@ import {
 } from "lucide-react";
 // Menu contextuel pour action rapide sur tâche
 import { useRef } from "react";
-  const [taskContextMenu, setTaskContextMenu] = useState<{ x: number; y: number; taskId: string; status: string } | null>(null);
-  const calendarRef = useRef(null);
 import { Calendar, momentLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import type { User } from "@supabase/supabase-js";
@@ -627,6 +626,8 @@ export default function CalendarPage() {
  const [journalEntries, setJournalEntries] = useState<JournalGardeEntry[]>([]);
  const [specialDays, setSpecialDays] = useState<SpecialDay[]>([]);
  const [swapRequests, setSwapRequests] = useState<SwapRequest[]>([]);
+ const [taskContextMenu, setTaskContextMenu] = useState<{ x: number; y: number; taskId: string; status: string } | null>(null);
+ const calendarRef = useRef(null);
  const [isLoadingSwapRequests, setIsLoadingSwapRequests] = useState(true);
 
  const [isCreating, setIsCreating] = useState(false);
