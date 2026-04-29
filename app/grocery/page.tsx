@@ -1,1003 +1,474 @@
 "use client";
 
-import { FormEvent, MouseEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type { User } from "@supabase/supabase-js";
 import {
-  Baby,
-  Beef,
-  Check,
-  CheckCircle2,
+  ChevronLeft,
   ChevronRight,
-  CirclePlus,
-  Droplets,
-  FlaskConical,
-  Milk,
-  Package,
-  Pill,
   Plus,
-  ShoppingCart,
-  Sparkles,
   Trash2,
-  Wheat,
-  Wind,
+  RefreshCw,
+  ShoppingCart,
+  Check,
+  X,
+  User,
+  Loader,
 } from "lucide-react";
-import { useFamily } from "@/components/FamilyProvider";
-import { getFeatureAccess } from "@/lib/family";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { useFamily } from "@/components/FamilyProvider";
+import {
+  CATEGORIES,
+  CATEGORY_ICONS,
+  GroceryItem,
+  GroceryList,
+  addGroceryItem,
+  clearCheckedItems,
+  deleteGroceryItem,
+  fetchGroceryItems,
+  fetchOrCreateGroceryList,
+  getWeekStart,
+  toggleGroceryItem,
+  toggleRecurring,
+  type GroceryCategory,
+} from "@/lib/groceryApi";
 
-type GroceryCategory =
-  | "fruits_vegetables"
-  | "meats_fish"
-  | "dairy"
-  | "bakery"
-  | "dry_goods"
-  | "frozen"
-  | "drinks"
-  | "household"
-  | "hygiene_beauty"
-  | "pharmacy"
-  | "baby_kids"
-  | "other";
-
-type GroceryItem = {
-  id: string;
-  familyId: string;
-  name: string;
-  quantity: string | null;
-  category: GroceryCategory;
-  addedBy: string | null;
-  addedByName: string | null;
-  isChecked: boolean;
-  isRecurring: boolean;
-  checkedAt: string | null;
-  checkedByName: string | null;
-  createdAt: string;
-};
-
-type GroceryRow = Record<string, unknown>;
-
-type CategoryConfig = {
-  label: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-};
-
-type ContextMenuState = {
-  item: GroceryItem;
-  x: number;
-  y: number;
-};
-
-const CATEGORY_ORDER: GroceryCategory[] = [
-  "fruits_vegetables",
-  "meats_fish",
-  "dairy",
-  "bakery",
-  "dry_goods",
-  "frozen",
-  "drinks",
-  "household",
-  "hygiene_beauty",
-  "pharmacy",
-  "baby_kids",
-  "other",
-];
-
-const CATEGORY_CONFIG: Record<GroceryCategory, CategoryConfig> = {
-  fruits_vegetables: { label: "Fruits et legumes", icon: Wind },
-  meats_fish: { label: "Viandes et poissons", icon: Beef },
-  dairy: { label: "Produits laitiers", icon: Milk },
-  bakery: { label: "Boulangerie", icon: Wheat },
-  dry_goods: { label: "Epicerie seche", icon: Package },
-  frozen: { label: "Surgeles", icon: SnowflakeIcon },
-  drinks: { label: "Boissons", icon: Droplets },
-  household: { label: "Produits menagers", icon: Sparkles },
-  hygiene_beauty: { label: "Hygiene et beaute", icon: FlaskConical },
-  pharmacy: { label: "Pharmacie", icon: Pill },
-  baby_kids: { label: "Bebe et enfants", icon: Baby },
-  other: { label: "Autre", icon: ChevronRight },
-};
-
-function SnowflakeIcon({ size = 16, className }: { size?: number; className?: string }) {
-  return <Wind size={size} className={className} />;
-}
-
-function safeText(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function normalizeCategory(raw: string): GroceryCategory {
-  const value = raw.toLowerCase().trim();
-  if (CATEGORY_ORDER.includes(value as GroceryCategory)) {
-    return value as GroceryCategory;
-  }
-
-  if (value === "fruits" || value === "vegetables") {
-    return "fruits_vegetables";
-  }
-  if (value === "meat") {
-    return "meats_fish";
-  }
-  if (value === "condiments") {
-    return "dry_goods";
-  }
-  if (value === "drinks") {
-    return "drinks";
-  }
-  return "other";
-}
-
-function formatDateShort(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "date inconnue";
-  }
-  return date.toLocaleDateString("fr-CA", { day: "2-digit", month: "long", year: "numeric" });
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "heure inconnue";
-  }
-  return `${date.toLocaleDateString("fr-CA", { day: "2-digit", month: "long" })} a ${date.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })}`;
-}
-
-function guessCategory(name: string): GroceryCategory {
-  const n = name.toLowerCase();
-
-  if (n.match(/pomme|banane|raisin|orange|tomate|carotte|brocoli|salade|epinard|concombre|fruit|legume/)) {
-    return "fruits_vegetables";
-  }
-  if (n.match(/boeuf|poulet|dinde|saumon|thon|viande|poisson|steak|porc/)) {
-    return "meats_fish";
-  }
-  if (n.match(/lait|yaourt|fromage|beurre|creme|mozzarella/)) {
-    return "dairy";
-  }
-  if (n.match(/pain|bagel|croissant|brioche|miche/)) {
-    return "bakery";
-  }
-  if (n.match(/riz|pate|pates|farine|cereale|lentille|haricot|quinoa|huile/)) {
-    return "dry_goods";
-  }
-  if (n.match(/surgele|pizza congelee|frite|legume congele|glace/)) {
-    return "frozen";
-  }
-  if (n.match(/jus|eau|lait vegetal|cafe|the|boisson|soda/)) {
-    return "drinks";
-  }
-  if (n.match(/detergent|savon menager|essuie|nettoyant|javel|liquide vaisselle/)) {
-    return "household";
-  }
-  if (n.match(/shampoing|dentifrice|deodorant|creme|hygiene|beaute/)) {
-    return "hygiene_beauty";
-  }
-  if (n.match(/ibuprofene|acetaminophene|pansement|vitamine|pharmacie/)) {
-    return "pharmacy";
-  }
-  if (n.match(/couche|lingette|lait bebe|compote bebe|bebe|enfant/)) {
-    return "baby_kids";
-  }
-
-  return "other";
-}
-
-function firstName(fullName: string): string {
-  const trimmed = fullName.trim();
-  if (!trimmed) {
-    return "Parent";
-  }
-  return trimmed.split(" ")[0] ?? "Parent";
-}
+const supabase = getSupabaseBrowserClient();
 
 export default function GroceryPage() {
   const router = useRouter();
-  const { activeFamilyId, currentRole, currentPermissions } = useFamily();
-
-  const inputRef = useRef<HTMLInputElement>(null);
-  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [user, setUser] = useState<User | null>(null);
-  const [displayName, setDisplayName] = useState("Parent");
+  const { family } = useFamily();
+  const [user, setUser] = useState<any>(null);
+  const [currentList, setCurrentList] = useState<GroceryList | null>(null);
   const [items, setItems] = useState<GroceryItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [inputName, setInputName] = useState("");
-  const [inputQuantity, setInputQuantity] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
-  const [isCompleting, setIsCompleting] = useState(false);
-  const [isCreatingNewList, setIsCreatingNewList] = useState(false);
-  const [confirmCompleteOpen, setConfirmCompleteOpen] = useState(false);
-  const [newListOpen, setNewListOpen] = useState(false);
-  const [importRecurringOnNewList, setImportRecurringOnNewList] = useState(true);
-  const [statusMessage, setStatusMessage] = useState("");
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [swipeOffsets, setSwipeOffsets] = useState<Record<string, number>>({});
+  const [weekStart, setWeekStart] = useState<string>(getWeekStart(new Date()));
+  const [profiles, setProfiles] = useState<Record<string, string>>({});
 
-  const groceryAccess = currentRole
-    ? getFeatureAccess("grocery", currentRole, currentPermissions)
-    : { allowed: true, readOnly: false, reason: "" };
+  // Formulaire d'ajout
+  const [showForm, setShowForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCategory, setNewCategory] = useState<GroceryCategory>("Épicerie sèche");
+  const [newQty, setNewQty] = useState("");
+  const [newUnit, setNewUnit] = useState("");
+  const [newRecurring, setNewRecurring] = useState(false);
+  const [newAssigned, setNewAssigned] = useState("");
+  const [adding, setAdding] = useState(false);
 
-  const refreshItems = async (familyId: string, client = getSupabaseBrowserClient()) => {
-    const response = await client
-      .from("grocery_items")
-      .select("*")
-      .eq("family_id", familyId)
-      .order("created_at", { ascending: true });
+  const inputRef = useRef<HTMLInputElement>(null);
 
-    if (response.error) {
-      setError(response.error.message);
-      return;
-    }
-
-    const mapped = ((response.data ?? []) as GroceryRow[])
-      .map((row): GroceryItem | null => {
-        const id = safeText(row.id);
-        const familyIdValue = safeText(row.family_id);
-        const name = safeText(row.name).trim();
-
-        if (!id || !familyIdValue || !name) {
-          return null;
-        }
-
-        return {
-          id,
-          familyId: familyIdValue,
-          name,
-          quantity: safeText(row.quantity).trim() || null,
-          category: normalizeCategory(safeText(row.category)),
-          addedBy: safeText(row.added_by) || null,
-          addedByName: safeText(row.added_by_name) || null,
-          isChecked: Boolean(row.is_checked),
-          isRecurring: Boolean(row.is_recurring),
-          checkedAt: safeText(row.checked_at) || null,
-          checkedByName: safeText(row.checked_by_name) || null,
-          createdAt: safeText(row.created_at) || new Date().toISOString(),
-        };
-      })
-      .filter((item): item is GroceryItem => item !== null);
-
-    setItems(mapped);
-    setError("");
-  };
-
+  // Charger l'utilisateur
   useEffect(() => {
-    let cleanupRealtime: (() => void) | null = null;
-
-    const init = async () => {
-      let client;
-      try {
-        client = getSupabaseBrowserClient();
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Configuration Supabase manquante.");
-        setLoading(false);
-        return;
-      }
-
-      const auth = await client.auth.getUser();
-      if (!auth.data.user) {
-        router.replace("/");
-        return;
-      }
-
-      setUser(auth.data.user);
-
-      const profileResponse = await client
-        .from("profiles")
-        .select("first_name, last_name, prenom, nom, email")
-        .eq("user_id", auth.data.user.id)
-        .maybeSingle();
-
-      const profile = (profileResponse.data ?? null) as Record<string, unknown> | null;
-      const first = safeText(profile?.first_name ?? profile?.prenom).trim();
-      const last = safeText(profile?.last_name ?? profile?.nom).trim();
-      const fallbackName = safeText(profile?.email).split("@")[0] || "Parent";
-      setDisplayName(`${first} ${last}`.trim() || fallbackName);
-
-      if (!activeFamilyId) {
-        setError("Aucun espace actif sélectionné.");
-        setLoading(false);
-        return;
-      }
-
-      await refreshItems(activeFamilyId, client);
-
-      const channel = client
-        .channel(`grocery-live-${activeFamilyId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "grocery_items",
-            filter: `family_id=eq.${activeFamilyId}`,
-          },
-          async () => {
-            await refreshItems(activeFamilyId, client);
-          },
-        )
-        .subscribe();
-
-      cleanupRealtime = () => {
-        channel.unsubscribe();
-      };
-
-      setLoading(false);
-    };
-
-    void init();
-
-    return () => {
-      cleanupRealtime?.();
-    };
-  }, [activeFamilyId, router]);
-
-  useEffect(() => {
-    const closeMenu = () => setContextMenu(null);
-    window.addEventListener("click", closeMenu);
-    return () => window.removeEventListener("click", closeMenu);
+    supabase.auth.getUser().then(({ data }) => setUser(data.user));
   }, []);
 
-  const activeItems = useMemo(() => items.filter((item) => !item.isChecked), [items]);
-  const checkedItems = useMemo(() => items.filter((item) => item.isChecked), [items]);
-  const itemCount = activeItems.length;
-
-  const createdByLabel = useMemo(() => {
-    if (items.length === 0) {
-      return null;
-    }
-    const first = [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
-    if (!first) {
-      return null;
-    }
-    return `${first.addedByName || "Parent"} le ${formatDateShort(first.createdAt)}`;
-  }, [items]);
-
-  const latestCompletion = useMemo(() => {
-    if (activeItems.length > 0 || checkedItems.length === 0) {
-      return null;
-    }
-    const latest = [...checkedItems]
-      .filter((item) => item.checkedAt)
-      .sort((a, b) => (b.checkedAt || "").localeCompare(a.checkedAt || ""))[0];
-
-    if (!latest || !latest.checkedAt) {
-      return null;
-    }
-
-    return {
-      by: latest.checkedByName || latest.addedByName || "Parent",
-      at: latest.checkedAt,
-    };
-  }, [activeItems.length, checkedItems]);
-
-  const grouped = useMemo(() => {
-    const groups = new Map<GroceryCategory, { active: GroceryItem[]; checked: GroceryItem[] }>();
-    for (const cat of CATEGORY_ORDER) {
-      groups.set(cat, { active: [], checked: [] });
-    }
-
-    for (const item of items) {
-      const bucket = groups.get(item.category) || { active: [], checked: [] };
-      if (item.isChecked) {
-        bucket.checked.push(item);
-      } else {
-        bucket.active.push(item);
-      }
-      groups.set(item.category, bucket);
-    }
-
-    return CATEGORY_ORDER
-      .map((category) => ({ category, ...groups.get(category)! }))
-      .filter((entry) => entry.active.length > 0 || entry.checked.length > 0);
-  }, [items]);
-
-  const recurringTemplates = useMemo(() => {
-    const uniq = new Map<string, GroceryItem>();
-    for (const item of items) {
-      if (!item.isRecurring) {
-        continue;
-      }
-      const key = `${item.name.toLowerCase()}|${item.quantity ?? ""}|${item.category}`;
-      if (!uniq.has(key)) {
-        uniq.set(key, item);
-      }
-    }
-    return Array.from(uniq.values());
-  }, [items]);
-
-  const sendCoparentNotification = async (message: string) => {
-    if (!activeFamilyId || !user) {
-      return;
-    }
-
-    const client = getSupabaseBrowserClient();
-    await client.from("messages").insert({
-      family_id: activeFamilyId,
-      sender_id: user.id,
-      content: message,
-    });
-  };
-
-  const onAddItem = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!activeFamilyId || !user || groceryAccess.readOnly) {
-      return;
-    }
-
-    const name = inputName.trim();
-    if (!name) {
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      const client = getSupabaseBrowserClient();
-      const result = await client.from("grocery_items").insert({
-        family_id: activeFamilyId,
-        name,
-        quantity: inputQuantity.trim() || null,
-        category: guessCategory(name),
-        added_by: user.id,
-        added_by_name: displayName,
-        is_checked: false,
+  // Charger les profils de la famille
+  useEffect(() => {
+    if (!family?.id) return;
+    supabase
+      .from("profiles")
+      .select("id, full_name")
+      .eq("family_id", family.id)
+      .then(({ data }) => {
+        if (data) {
+          const map: Record<string, string> = {};
+          data.forEach((p) => (map[p.id] = p.full_name));
+          setProfiles(map);
+        }
       });
+  }, [family?.id]);
 
-      if (result.error) {
-        throw new Error(result.error.message);
-      }
-
-      setInputName("");
-      setInputQuantity("");
-      setStatusMessage("Item ajoute a la liste.");
-      inputRef.current?.focus();
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("twonest:grocery-added"));
-      }
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Impossible d'ajouter cet item.");
+  // Charger la liste et les articles
+  const loadList = useCallback(async () => {
+    if (!family?.id || !user?.id) return;
+    setLoading(true);
+    try {
+      const list = await fetchOrCreateGroceryList(family.id, weekStart, user.id);
+      setCurrentList(list);
+      const groceryItems = await fetchGroceryItems(list.id);
+      setItems(groceryItems);
+    } catch (err) {
+      console.error("Erreur chargement épicerie:", err);
     } finally {
-      setIsSaving(false);
+      setLoading(false);
     }
+  }, [family?.id, user?.id, weekStart]);
+
+  useEffect(() => {
+    loadList();
+  }, [loadList]);
+
+  // Realtime Supabase
+  useEffect(() => {
+    if (!currentList?.id) return;
+    const channel = supabase
+      .channel(`grocery_items_${currentList.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "grocery_items", filter: `list_id=eq.${currentList.id}` },
+        () => loadList()
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [currentList?.id, loadList]);
+
+  // Navigation semaine
+  const changeWeek = (direction: number) => {
+    const date = new Date(weekStart);
+    date.setDate(date.getDate() + direction * 7);
+    setWeekStart(getWeekStart(date));
   };
 
-  const updateCheckedState = async (item: GroceryItem, checked: boolean) => {
-    const client = getSupabaseBrowserClient();
-    const payload: Record<string, unknown> = {
-      is_checked: checked,
-      checked_at: checked ? new Date().toISOString() : null,
-      checked_by_name: checked ? firstName(displayName) : null,
-    };
-
-    const response = await client.from("grocery_items").update(payload).eq("id", item.id);
-    if (!response.error) {
-      return;
-    }
-
-    // Backward compatibility if checked_by_name column is not created yet.
-    const fallback = await client
-      .from("grocery_items")
-      .update({
-        is_checked: checked,
-        checked_at: checked ? new Date().toISOString() : null,
-      })
-      .eq("id", item.id);
-
-    if (fallback.error) {
-      throw new Error(fallback.error.message);
-    }
+  const formatWeekLabel = () => {
+    const start = new Date(weekStart);
+    const end = new Date(weekStart);
+    end.setDate(end.getDate() + 6);
+    const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "long" };
+    return `${start.toLocaleDateString("fr-CA", opts)} – ${end.toLocaleDateString("fr-CA", opts)}`;
   };
 
-  const onToggleItem = async (item: GroceryItem, checked: boolean) => {
-    if (groceryAccess.readOnly) {
-      return;
-    }
+  const isCurrentWeek = weekStart === getWeekStart(new Date());
+
+  // Grouper par catégorie
+  const grouped = CATEGORIES.reduce((acc, cat) => {
+    const catItems = items.filter((i) => i.category === cat);
+    if (catItems.length > 0) acc[cat] = catItems;
+    return acc;
+  }, {} as Record<string, GroceryItem[]>);
+
+  // Statistiques
+  const totalItems = items.length;
+  const checkedItems = items.filter((i) => i.is_checked).length;
+  const progress = totalItems > 0 ? Math.round((checkedItems / totalItems) * 100) : 0;
+
+  // Ajouter un article
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || !currentList || !user) return;
+    setAdding(true);
     try {
-      await updateCheckedState(item, checked);
-    } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : "Impossible de mettre a jour l'item.");
-    }
-  };
-
-  const onDeleteItem = async (id: string) => {
-    if (groceryAccess.readOnly) {
-      return;
-    }
-
-    try {
-      const client = getSupabaseBrowserClient();
-      const response = await client.from("grocery_items").delete().eq("id", id);
-      if (response.error) {
-        throw new Error(response.error.message);
-      }
-      setStatusMessage("Item supprime.");
-    } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Suppression impossible.");
-    }
-  };
-
-  const onCompleteList = async () => {
-    if (!activeFamilyId || groceryAccess.readOnly || activeItems.length === 0) {
-      setConfirmCompleteOpen(false);
-      return;
-    }
-
-    setIsCompleting(true);
-    try {
-      const client = getSupabaseBrowserClient();
-      const completionDate = new Date().toISOString();
-
-      const response = await client
-        .from("grocery_items")
-        .update({ is_checked: true, checked_at: completionDate, checked_by_name: firstName(displayName) })
-        .eq("family_id", activeFamilyId)
-        .eq("is_checked", false);
-
-      if (response.error) {
-        const fallback = await client
-          .from("grocery_items")
-          .update({ is_checked: true, checked_at: completionDate })
-          .eq("family_id", activeFamilyId)
-          .eq("is_checked", false);
-        if (fallback.error) {
-          throw new Error(fallback.error.message);
-        }
-      }
-
-      await sendCoparentNotification(`${firstName(displayName)} a termine l'epicerie ! 🛒`);
-      setStatusMessage(`${firstName(displayName)} a complete l'epicerie le ${formatDateTime(completionDate)}`);
-      setConfirmCompleteOpen(false);
-    } catch (completeError) {
-      setError(completeError instanceof Error ? completeError.message : "Impossible de completer la liste.");
-    } finally {
-      setIsCompleting(false);
-    }
-  };
-
-  const addAllRecurringItems = async () => {
-    if (!activeFamilyId || !user || groceryAccess.readOnly || recurringTemplates.length === 0) {
-      return;
-    }
-
-    const existingKeys = new Set(activeItems.map((item) => `${item.name.toLowerCase()}|${item.category}`));
-    const toInsert = recurringTemplates
-      .filter((item) => !existingKeys.has(`${item.name.toLowerCase()}|${item.category}`))
-      .map((item) => ({
-        family_id: activeFamilyId,
-        name: item.name,
-        quantity: item.quantity,
-        category: item.category,
+      await addGroceryItem({
+        list_id: currentList.id,
+        family_id: family!.id,
+        name: newName.trim(),
+        category: newCategory,
+        quantity: newQty ? parseFloat(newQty) : null,
+        unit: newUnit || null,
         is_checked: false,
-        is_recurring: true,
+        checked_by: null,
+        checked_at: null,
+        is_recurring: newRecurring,
+        assigned_to: newAssigned || null,
         added_by: user.id,
-        added_by_name: displayName,
-      }));
-
-    if (toInsert.length === 0) {
-      setStatusMessage("Tous les recurrents sont deja dans la liste.");
-      return;
-    }
-
-    const client = getSupabaseBrowserClient();
-    const response = await client.from("grocery_items").insert(toInsert);
-    if (response.error) {
-      setError(response.error.message);
-      return;
-    }
-
-    setStatusMessage(`${toInsert.length} item(s) recurrents ajoutes.`);
-  };
-
-  const onCreateNewList = async () => {
-    if (!activeFamilyId || groceryAccess.readOnly) {
-      setNewListOpen(false);
-      return;
-    }
-
-    setIsCreatingNewList(true);
-    try {
-      const client = getSupabaseBrowserClient();
-      if (activeItems.length > 0) {
-        const archive = await client
-          .from("grocery_items")
-          .update({ is_checked: true, checked_at: new Date().toISOString(), checked_by_name: firstName(displayName) })
-          .eq("family_id", activeFamilyId)
-          .eq("is_checked", false);
-
-        if (archive.error) {
-          const fallback = await client
-            .from("grocery_items")
-            .update({ is_checked: true, checked_at: new Date().toISOString() })
-            .eq("family_id", activeFamilyId)
-            .eq("is_checked", false);
-          if (fallback.error) {
-            throw new Error(fallback.error.message);
-          }
-        }
-      }
-
-      if (importRecurringOnNewList) {
-        await addAllRecurringItems();
-      }
-
-      setStatusMessage("Nouvelle liste creee.");
-      setNewListOpen(false);
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Creation de nouvelle liste impossible.");
+        sort_order: items.length,
+      });
+      setNewName("");
+      setNewQty("");
+      setNewUnit("");
+      setNewRecurring(false);
+      setNewAssigned("");
+      await loadList();
+      inputRef.current?.focus();
+    } catch (err) {
+      console.error("Erreur ajout article:", err);
     } finally {
-      setIsCreatingNewList(false);
+      setAdding(false);
     }
   };
 
-  const onSetRecurring = async (item: GroceryItem, recurring: boolean) => {
-    const client = getSupabaseBrowserClient();
-    const response = await client.from("grocery_items").update({ is_recurring: recurring }).eq("id", item.id);
-    if (response.error) {
-      setError(response.error.message);
-      return;
-    }
-    setContextMenu(null);
-    setStatusMessage(recurring ? "Item marque comme recurrent." : "Item retire des recurrents.");
-  };
-
-  const onEditQuantity = async (item: GroceryItem) => {
-    const next = window.prompt("Modifier la quantite", item.quantity ?? "");
-    if (next === null) {
-      return;
-    }
-    const client = getSupabaseBrowserClient();
-    const response = await client.from("grocery_items").update({ quantity: next.trim() || null }).eq("id", item.id);
-    if (response.error) {
-      setError(response.error.message);
-      return;
-    }
-    setContextMenu(null);
-  };
-
-  const openLongPressMenu = (item: GroceryItem, x: number, y: number) => {
-    setContextMenu({ item, x, y });
-  };
-
-  const startLongPress = (item: GroceryItem, x: number, y: number) => {
-    if (longPressRef.current) {
-      clearTimeout(longPressRef.current);
-    }
-    longPressRef.current = setTimeout(() => {
-      openLongPressMenu(item, x, y);
-    }, 450);
-  };
-
-  const stopLongPress = () => {
-    if (longPressRef.current) {
-      clearTimeout(longPressRef.current);
-      longPressRef.current = null;
-    }
-  };
-
-  const onSwipeMove = (itemId: string, deltaX: number) => {
-    const clamped = Math.max(-120, Math.min(0, deltaX));
-    setSwipeOffsets((prev) => ({ ...prev, [itemId]: clamped }));
-  };
-
-  const onSwipeEnd = (itemId: string) => {
-    const offset = swipeOffsets[itemId] ?? 0;
-    if (offset <= -90) {
-      void onDeleteItem(itemId);
-    }
-    setSwipeOffsets((prev) => ({ ...prev, [itemId]: 0 }));
-  };
-
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#F5F0EB] px-6">
-        <p className="text-sm font-medium text-[#6B5D55]">Chargement de la liste...</p>
-      </div>
+  const handleToggle = async (item: GroceryItem) => {
+    if (!user) return;
+    // Optimistic update
+    setItems((prev) =>
+      prev.map((i) => i.id === item.id ? { ...i, is_checked: !i.is_checked } : i)
     );
-  }
+    await toggleGroceryItem(item.id, !item.is_checked, user.id);
+  };
+
+  const handleDelete = async (itemId: string) => {
+    setItems((prev) => prev.filter((i) => i.id !== itemId));
+    await deleteGroceryItem(itemId);
+  };
+
+  const handleToggleRecurring = async (item: GroceryItem) => {
+    setItems((prev) =>
+      prev.map((i) => i.id === item.id ? { ...i, is_recurring: !i.is_recurring } : i)
+    );
+    await toggleRecurring(item.id, !item.is_recurring);
+  };
+
+  const handleClearChecked = async () => {
+    if (!currentList) return;
+    await clearCheckedItems(currentList.id);
+    await loadList();
+  };
 
   return (
-    <div className="min-h-screen bg-[#F5F0EB] pb-32">
-      <section className="sticky top-0 z-30 border-b border-[#DED6CF] bg-[#F5F0EB]/95 backdrop-blur-sm">
-        <div className="mx-auto max-w-4xl px-4 py-4 sm:px-6">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-semibold text-[#2C2420]">Liste d'epicerie</h1>
-              <p className="mt-1 text-sm text-[#6B5D55]">{itemCount} items a acheter</p>
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center">
+            <ShoppingCart className="w-5 h-5 text-green-600" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">Liste d'épicerie</h1>
+            <p className="text-sm text-gray-500">Partagée avec la famille</p>
+          </div>
+        </div>
+
+        {/* Navigation semaine */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => changeWeek(-1)}
+              className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4 text-gray-600" />
+            </button>
+
+            <div className="text-center">
+              <p className="font-semibold text-gray-900 text-sm">{formatWeekLabel()}</p>
+              {isCurrentWeek && (
+                <span className="text-xs text-green-600 font-medium">✦ Cette semaine</span>
+              )}
             </div>
-            <div className="flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setNewListOpen(true)}
-                disabled={groceryAccess.readOnly || isCreatingNewList}
-                className="rounded-full border border-[#D9D0C8] bg-white px-4 py-2 text-xs font-semibold text-[#6B5D55] transition hover:bg-[#F9F7F3] disabled:opacity-60"
-              >
-                Nouvelle liste
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmCompleteOpen(true)}
-                disabled={groceryAccess.readOnly || itemCount === 0 || isCompleting}
-                className="inline-flex items-center gap-1 rounded-full bg-[#6B8F71] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#5D7F63] disabled:opacity-60"
-              >
-                <CheckCircle2 size={14} />
-                Liste complete
-              </button>
-            </div>
+
+            <button
+              onClick={() => changeWeek(1)}
+              className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
+            >
+              <ChevronRight className="w-4 h-4 text-gray-600" />
+            </button>
           </div>
 
-          <div className="mt-4 rounded-xl border border-[#DED6CF] bg-white px-4 py-3">
-            {itemCount > 0 ? (
-              <p className="text-sm text-[#6B5D55]">Liste creee par {createdByLabel ?? "Parent"}</p>
-            ) : latestCompletion ? (
-              <p className="rounded-lg bg-[#E6F0E8] px-3 py-2 text-sm font-medium text-[#52725A]">
-                Epicerie completee par {latestCompletion.by} aujourd'hui a {new Date(latestCompletion.at).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })}
-              </p>
-            ) : (
-              <p className="text-sm text-[#6B5D55]">Aucun item actif pour le moment.</p>
-            )}
-          </div>
-
-          {(statusMessage || error) && (
+          {/* Barre de progression */}
+          {totalItems > 0 && (
             <div className="mt-3">
-              {statusMessage && <p className="text-xs font-medium text-[#6B8F71]">{statusMessage}</p>}
-              {error && <p className="text-xs font-medium text-[#A85C52]">{error}</p>}
+              <div className="flex justify-between text-xs text-gray-500 mb-1">
+                <span>{checkedItems}/{totalItems} articles</span>
+                <span>{progress}%</span>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-2">
+                <div
+                  className="bg-green-500 h-2 rounded-full transition-all duration-500"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              {progress === 100 && (
+                <p className="text-center text-xs text-green-600 font-medium mt-1">
+                  🎉 Liste complétée !
+                </p>
+              )}
             </div>
           )}
         </div>
-      </section>
 
-      <main className="mx-auto max-w-4xl space-y-5 px-4 py-5 sm:px-6">
-        {grouped.length === 0 ? (
-          <div className="rounded-2xl border border-[#DED6CF] bg-white p-10 text-center">
-            <ShoppingCart size={26} className="mx-auto text-[#A89080]" />
-            <p className="mt-3 text-sm font-semibold text-[#2C2420]">Liste vide</p>
-            <p className="text-sm text-[#6B5D55]">Ajoutez un item en bas de l'ecran.</p>
-          </div>
-        ) : (
-          grouped.map((group) => {
-            const config = CATEGORY_CONFIG[group.category];
-            const Icon = config.icon;
-            return (
-              <section key={group.category} className="overflow-hidden rounded-2xl border border-[#DED6CF] bg-white shadow-[0_1px_3px_rgba(44,36,32,0.05)]">
-                <header className="flex items-center justify-between border-b border-[#EFE7E1] px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <Icon size={16} className="text-[#7C6B5D]" />
-                    <h2 className="text-sm font-semibold text-[#2C2420]">{config.label}</h2>
-                  </div>
-                  <span className="text-xs text-[#A89080]">{group.active.length} restants</span>
-                </header>
+        {/* Bouton ajouter */}
+        <button
+          onClick={() => { setShowForm(!showForm); setTimeout(() => inputRef.current?.focus(), 100); }}
+          className="w-full bg-green-600 hover:bg-green-700 text-white rounded-2xl py-3 px-4 flex items-center justify-center gap-2 font-medium transition-colors shadow-sm"
+        >
+          <Plus className="w-5 h-5" />
+          Ajouter un article
+        </button>
 
-                <div>
-                  {[...group.active, ...group.checked].map((item) => {
-                    const translate = swipeOffsets[item.id] ?? 0;
-                    return (
-                      <div key={item.id} className="relative border-b border-[#F4EEEA] last:border-b-0">
-                        <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                          <button
-                            type="button"
-                            onClick={() => onDeleteItem(item.id)}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#FCECE8] text-[#B05A4B]"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+        {/* Formulaire d'ajout */}
+        {showForm && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+            <form onSubmit={handleAdd} className="space-y-3">
+              <input
+                ref={inputRef}
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Nom de l'article..."
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                required
+              />
 
-                        <div
-                          className="bg-white px-4 py-3 transition-transform duration-200"
-                          style={{ transform: `translateX(${translate}px)` }}
-                          onContextMenu={(event: MouseEvent<HTMLDivElement>) => {
-                            event.preventDefault();
-                            openLongPressMenu(item, event.clientX, event.clientY);
-                          }}
-                          onMouseDown={(event) => startLongPress(item, event.clientX, event.clientY)}
-                          onMouseUp={stopLongPress}
-                          onMouseLeave={stopLongPress}
-                          onTouchStart={(event: TouchEvent<HTMLDivElement>) => {
-                            const touch = event.touches[0];
-                            const startX = touch.clientX;
-                            startLongPress(item, touch.clientX, touch.clientY);
-                            (event.currentTarget as HTMLDivElement).dataset.touchStartX = String(startX);
-                          }}
-                          onTouchMove={(event: TouchEvent<HTMLDivElement>) => {
-                            const touchStartRaw = (event.currentTarget as HTMLDivElement).dataset.touchStartX;
-                            if (!touchStartRaw) {
-                              return;
-                            }
-                            const startX = Number(touchStartRaw);
-                            const delta = event.touches[0].clientX - startX;
-                            onSwipeMove(item.id, delta);
-                          }}
-                          onTouchEnd={() => {
-                            stopLongPress();
-                            onSwipeEnd(item.id);
-                          }}
-                        >
-                          <div className="flex items-start gap-3">
-                            <button
-                              type="button"
-                              onClick={() => onToggleItem(item, !item.isChecked)}
-                              disabled={groceryAccess.readOnly}
-                              className={`mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border transition ${
-                                item.isChecked
-                                  ? "border-[#7C6B5D] bg-[#7C6B5D] text-white"
-                                  : "border-[#CFC4BA] bg-white text-transparent hover:border-[#7C6B5D]"
-                              }`}
-                            >
-                              <Check size={13} />
-                            </button>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value as GroceryCategory)}
+                  className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  {CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {CATEGORY_ICONS[cat]} {cat}
+                    </option>
+                  ))}
+                </select>
 
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-start justify-between gap-2">
-                                <p className={`text-sm ${item.isChecked ? "text-[#A89080] line-through" : "text-[#2C2420]"}`}>{item.name}</p>
-                                {item.quantity && <span className="text-xs text-[#A89080]">{item.quantity}</span>}
-                              </div>
-                              {item.isChecked && (
-                                <p className="mt-1 text-[11px] text-[#A89080]">Coche par {item.checkedByName || item.addedByName || "Parent"}</p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="flex gap-1">
+                  <input
+                    type="number"
+                    value={newQty}
+                    onChange={(e) => setNewQty(e.target.value)}
+                    placeholder="Qté"
+                    className="w-20 border border-gray-200 rounded-xl px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <input
+                    type="text"
+                    value={newUnit}
+                    onChange={(e) => setNewUnit(e.target.value)}
+                    placeholder="Unité"
+                    className="flex-1 border border-gray-200 rounded-xl px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
                 </div>
-              </section>
-            );
-          })
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={newAssigned}
+                  onChange={(e) => setNewAssigned(e.target.value)}
+                  className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">Assigner à...</option>
+                  {Object.entries(profiles).map(([id, name]) => (
+                    <option key={id} value={id}>{name}</option>
+                  ))}
+                </select>
+
+                <label className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-50">
+                  <input
+                    type="checkbox"
+                    checked={newRecurring}
+                    onChange={(e) => setNewRecurring(e.target.checked)}
+                    className="rounded accent-green-600"
+                  />
+                  <span className="text-sm text-gray-700">
+                    <RefreshCw className="w-3 h-3 inline mr-1 text-green-600" />
+                    Récurrent
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={adding || !newName.trim()}
+                  className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-xl py-2 text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+                >
+                  {adding ? <Loader className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  Ajouter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  className="px-4 bg-gray-100 hover:bg-gray-200 rounded-xl py-2 text-sm text-gray-600 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </form>
+          </div>
         )}
 
-        <section className="rounded-2xl border border-[#DED6CF] bg-white p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CirclePlus size={16} className="text-[#7C6B5D]" />
-              <h3 className="text-sm font-semibold text-[#2C2420]">Recurrents</h3>
-            </div>
-            <button
-              type="button"
-              onClick={() => void addAllRecurringItems()}
-              disabled={groceryAccess.readOnly || recurringTemplates.length === 0}
-              className="rounded-full border border-[#D9D0C8] bg-[#F9F7F3] px-3 py-1 text-xs font-semibold text-[#6B5D55] disabled:opacity-60"
-            >
-              Ajouter tous a la liste
-            </button>
+        {/* Liste des articles */}
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader className="w-6 h-6 text-green-600 animate-spin" />
           </div>
-
-          {recurringTemplates.length === 0 ? (
-            <p className="mt-3 text-xs text-[#8C7A6E]">Longpress sur un item pour le rendre recurrent.</p>
-          ) : (
-            <div className="mt-3 space-y-2">
-              {recurringTemplates.map((item) => (
-                <div key={`rec-${item.id}`} className="flex items-center justify-between rounded-lg border border-[#EFE7E1] px-3 py-2">
-                  <div>
-                    <p className="text-sm text-[#2C2420]">{item.name}</p>
-                    <p className="text-xs text-[#A89080]">{CATEGORY_CONFIG[item.category].label}</p>
-                  </div>
-                  {item.quantity && <span className="text-xs text-[#A89080]">{item.quantity}</span>}
+        ) : totalItems === 0 ? (
+          <div className="text-center py-12 bg-white rounded-2xl border border-gray-100">
+            <ShoppingCart className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">Aucun article pour cette semaine</p>
+            <p className="text-gray-400 text-xs mt-1">Appuyez sur "Ajouter un article" pour commencer</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {Object.entries(grouped).map(([category, catItems]) => (
+              <div key={category} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                {/* En-tête catégorie */}
+                <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
+                  <span className="text-base">{CATEGORY_ICONS[category as GroceryCategory]}</span>
+                  <span className="text-sm font-semibold text-gray-700">{category}</span>
+                  <span className="ml-auto text-xs text-gray-400">
+                    {catItems.filter((i) => i.is_checked).length}/{catItems.length}
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </main>
 
-      {!groceryAccess.readOnly && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#DED6CF] bg-white/95 backdrop-blur-sm">
-          <form onSubmit={onAddItem} className="mx-auto flex max-w-4xl items-center gap-2 px-4 py-3 sm:px-6">
-            <input
-              ref={inputRef}
-              value={inputName}
-              onChange={(event) => setInputName(event.target.value)}
-              placeholder="Ajouter un item..."
-              disabled={isSaving}
-              className="h-11 flex-1 rounded-full border border-[#D9D0C8] bg-[#F9F7F3] px-4 text-sm text-[#2C2420] outline-none transition focus:border-[#7C6B5D]"
-            />
-            <input
-              value={inputQuantity}
-              onChange={(event) => setInputQuantity(event.target.value)}
-              placeholder="Qt"
-              disabled={isSaving}
-              className="h-11 w-16 rounded-full border border-[#D9D0C8] bg-[#F9F7F3] px-3 text-xs text-[#2C2420] outline-none"
-            />
-            <button
-              type="submit"
-              disabled={isSaving || !inputName.trim()}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#7C6B5D] text-white transition hover:bg-[#6D5D51] disabled:opacity-60"
-            >
-              <Plus size={18} />
-            </button>
-          </form>
-        </div>
-      )}
+                {/* Articles */}
+                <ul className="divide-y divide-gray-50">
+                  {catItems.map((item) => (
+                    <li
+                      key={item.id}
+                      className={`flex items-center gap-3 px-4 py-3 transition-colors ${
+                        item.is_checked ? "bg-gray-50" : "hover:bg-green-50/30"
+                      }`}
+                    >
+                      {/* Checkbox */}
+                      <button
+                        onClick={() => handleToggle(item)}
+                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                          item.is_checked
+                            ? "bg-green-500 border-green-500"
+                            : "border-gray-300 hover:border-green-400"
+                        }`}
+                      >
+                        {item.is_checked && <Check className="w-3 h-3 text-white" />}
+                      </button>
 
-      {confirmCompleteOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#20181066] p-4">
-          <div className="w-full max-w-md rounded-2xl border border-[#DED6CF] bg-white p-5">
-            <h4 className="text-base font-semibold text-[#2C2420]">Confirmer que l'epicerie est faite ?</h4>
-            <p className="mt-2 text-sm text-[#6B5D55]">Tous les items seront coches et archives.</p>
-            <div className="mt-4 flex justify-end gap-2">
+                      {/* Nom + détails */}
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-sm font-medium ${item.is_checked ? "line-through text-gray-400" : "text-gray-800"}`}>
+                          {item.quantity && <span className="text-gray-500 mr-1">{item.quantity}{item.unit}</span>}
+                          {item.name}
+                        </span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {item.assigned_to && profiles[item.assigned_to] && (
+                            <span className="text-xs text-blue-600 flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              {profiles[item.assigned_to]}
+                            </span>
+                          )}
+                          {item.is_recurring && (
+                            <span className="text-xs text-green-600 flex items-center gap-1">
+                              <RefreshCw className="w-3 h-3" />
+                              Récurrent
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleToggleRecurring(item)}
+                          title={item.is_recurring ? "Retirer des récurrents" : "Ajouter aux récurrents"}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            item.is_recurring ? "text-green-600 bg-green-50" : "text-gray-300 hover:text-green-500"
+                          }`}
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+
+            {/* Nettoyer les articles cochés */}
+            {checkedItems > 0 && (
               <button
-                type="button"
-                onClick={() => setConfirmCompleteOpen(false)}
-                className="rounded-full border border-[#D9D0C8] px-4 py-2 text-sm text-[#6B5D55]"
+                onClick={handleClearChecked}
+                className="w-full py-3 rounded-2xl border border-dashed border-gray-300 text-sm text-gray-500 hover:text-red-500 hover:border-red-300 transition-colors flex items-center justify-center gap-2"
               >
-                Annuler
+                <Trash2 className="w-4 h-4" />
+                Supprimer les {checkedItems} article{checkedItems > 1 ? "s" : ""} cochés
               </button>
-              <button
-                type="button"
-                onClick={() => void onCompleteList()}
-                disabled={isCompleting}
-                className="rounded-full bg-[#6B8F71] px-4 py-2 text-sm font-semibold text-white"
-              >
-                Confirmer
-              </button>
-            </div>
+            )}
           </div>
-        </div>
-      )}
-
-      {newListOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#20181066] p-4">
-          <div className="w-full max-w-md rounded-2xl border border-[#DED6CF] bg-white p-5">
-            <h4 className="text-base font-semibold text-[#2C2420]">Creer une nouvelle liste</h4>
-            <p className="mt-2 text-sm text-[#6B5D55]">La liste actuelle sera archivee.</p>
-            <label className="mt-4 flex items-center gap-2 text-sm text-[#6B5D55]">
-              <input
-                type="checkbox"
-                checked={importRecurringOnNewList}
-                onChange={(event) => setImportRecurringOnNewList(event.target.checked)}
-              />
-              Reimporter les recurrents
-            </label>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setNewListOpen(false)}
-                className="rounded-full border border-[#D9D0C8] px-4 py-2 text-sm text-[#6B5D55]"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={() => void onCreateNewList()}
-                disabled={isCreatingNewList}
-                className="rounded-full bg-[#7C6B5D] px-4 py-2 text-sm font-semibold text-white"
-              >
-                Demarrer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {contextMenu && (
-        <div
-          className="fixed z-50 w-52 overflow-hidden rounded-xl border border-[#DED6CF] bg-white shadow-[0_10px_30px_rgba(44,36,32,0.15)]"
-          style={{ left: Math.min(contextMenu.x, window.innerWidth - 220), top: Math.min(contextMenu.y, window.innerHeight - 180) }}
-        >
-          <button
-            type="button"
-            onClick={() => void onSetRecurring(contextMenu.item, !contextMenu.item.isRecurring)}
-            className="block w-full px-4 py-3 text-left text-sm text-[#2C2420] hover:bg-[#F9F7F3]"
-          >
-            {contextMenu.item.isRecurring ? "Retirer recurrent" : "Rendre recurrent"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void onEditQuantity(contextMenu.item)}
-            className="block w-full px-4 py-3 text-left text-sm text-[#2C2420] hover:bg-[#F9F7F3]"
-          >
-            Modifier la quantite
-          </button>
-          <button
-            type="button"
-            onClick={() => void onDeleteItem(contextMenu.item.id)}
-            className="block w-full px-4 py-3 text-left text-sm text-[#A85C52] hover:bg-[#FDEEEA]"
-          >
-            Supprimer
-          </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
